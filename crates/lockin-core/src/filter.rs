@@ -1,15 +1,20 @@
-//! Filter rules: decide which feed events are ignored.
+//! Filter rules: decide which blocks are ignored.
 
-use crate::model::{FeedEvent, FilterRule};
+use crate::model::FilterRule;
 
-/// True if at least one rule matches the event.
+/// True if at least one rule matches the block's title, location or description.
 /// Matching is a case-insensitive "contains".
-pub fn is_ignored(event: &FeedEvent, rules: &[FilterRule]) -> bool {
+pub fn is_ignored(
+    title: &str,
+    location: Option<&str>,
+    description: Option<&str>,
+    rules: &[FilterRule],
+) -> bool {
     for rule in rules {
         let text = match rule.field.as_str() {
-            "title" => Some(event.title.as_str()),
-            "location" => event.location.as_deref(),
-            "description" => event.description.as_deref(),
+            "title" => Some(title),
+            "location" => location,
+            "description" => description,
             _ => None,
         };
 

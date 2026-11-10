@@ -51,3 +51,11 @@ pub struct Course {
     pub code: Option<String>,
     pub name: String,
 }
+
+/// A saved iCal feed: TimeEdit now, Ufora later.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct CalendarSource {
+    pub id: String,
+    pub kind: String,
+    pub url: String,
+}

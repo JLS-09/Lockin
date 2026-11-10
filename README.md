@@ -9,9 +9,9 @@ A personal desktop app that keeps track of my class schedule and helps me actual
 it imports the schedule from TimeEdit, tracks what still needs doing per class, and runs
 study sessions that block distracting apps and websites.
 
-> **Status:** early development (phase 1 of 6). The TimeEdit import and the database work;
-> the GUI is still an empty Tauri window. Built first for CachyOS with KDE Plasma, with
-> Windows and macOS support planned later.
+> **Status:** phase 1 of 6 is done: the TimeEdit import, course detection, filter rules and the
+> database work from the command line. The GUI (phase 2) is still a placeholder window. Built
+> first for CachyOS with KDE Plasma, with Windows and macOS support planned later.
 
 ## Features
 
@@ -89,16 +89,30 @@ pnpm tauri dev
 Until the GUI is ready, the daemon works as a command-line tool:
 
 ```bash
-cargo run -p lockin-daemon -- ignore "zelfstandig werk"   # add a filter rule
-cargo run -p lockin-daemon -- sync "<TimeEdit iCal URL>"  # import the schedule
-cargo run -p lockin-daemon -- week                        # show this week's classes
+cargo run -p lockin-daemon -- sync "<TimeEdit iCal URL>"  # save the feed and import it
+cargo run -p lockin-daemon -- sync                        # later: fetch all saved feeds again
+cargo run -p lockin-daemon -- ignore "zelfstandig werk"   # add a filter rule (applies right away)
+cargo run -p lockin-daemon -- week                        # this week's classes, with short ids
+cargo run -p lockin-daemon -- courses                     # the courses found in the schedule
+cargo run -p lockin-daemon -- feeds                       # what each saved feed contains
 ```
 
 Get the URL in TimeEdit via **Subscribe**. It's personal, so don't commit it.
 
 Running `sync` again updates classes by their iCal UID: a class whose time changed is marked
 `moved`, and a future class that disappears from the feed is marked `cancelled` instead of
-being deleted.
+being deleted. Past classes stay, even after they drop out of the feed.
+
+A TimeEdit subscription never includes classes older than 14 days. To add the earlier weeks
+of a semester, download that period once in TimeEdit (**Download → iCal**) and import it:
+
+```bash
+cargo run -p lockin-daemon -- import-history <downloaded file>.ics
+```
+
+This only adds past classes Lockin doesn't know yet, and the file isn't saved as a feed.
+Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
+`remove-feed` and `keep-block` / `ignore-block` / `reset-block` for a manual exception per block.
 
 ## Development
 
@@ -107,13 +121,15 @@ cargo test                              # tests use a saved sample .ics, no netw
 cargo fmt && cargo clippy --all-targets # before committing
 ```
 
+GitHub Actions runs the same checks (plus `pnpm check`) on every push.
+
 Database changes go in a new file in `crates/lockin-core/migrations/`; they run automatically
 when the database is opened.
 
 ## Roadmap
 
-1. **Foundation:** workspace, database, TimeEdit import, filter rules *(in progress)*
-2. **Tracking classes:** week view, activities, semester overview, NL/EN translations
+1. **Foundation:** workspace, database, TimeEdit import, filter rules *(done)*
+2. **Tracking classes:** week view, activities, semester overview, NL/EN translations *(next)*
 3. **Deadlines:** manual deadlines and the Ufora feed
 4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications
 5. **Cloud sync** with Supabase

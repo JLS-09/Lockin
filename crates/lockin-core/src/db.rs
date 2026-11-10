@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::SqliteConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
@@ -12,7 +12,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 pub type Pool = SqlitePool;
 
 use crate::filter;
-use crate::model::{ClassBlock, Course, FeedEvent, FilterRule};
+use crate::model::{CalendarSource, ClassBlock, Course, FeedEvent, FilterRule};
 use crate::{new_id, now_text, title};
 
 /// Open (or create) the database file and run any new migrations.
@@ -54,6 +54,13 @@ pub async fn add_timeedit_source(pool: &SqlitePool, url: &str) -> Result<String>
             .await?;
 
     if let Some(id) = existing {
+        sqlx::query(
+            "UPDATE calendar_source SET deleted = 0, updated_at = ? WHERE id = ? AND deleted = 1",
+        )
+        .bind(now_text())
+        .bind(&id)
+        .execute(pool)
+        .await?;
         return Ok(id);
     }
 
@@ -69,8 +76,56 @@ pub async fn add_timeedit_source(pool: &SqlitePool, url: &str) -> Result<String>
     Ok(id)
 }
 
-/// Add an "ignore" rule on the title, for all sources.
-pub async fn add_title_rule(pool: &SqlitePool, pattern: &str) -> Result<()> {
+/// All saved calendar sources.
+pub async fn sources(pool: &SqlitePool) -> Result<Vec<CalendarSource>> {
+    let sources = sqlx::query_as("SELECT id, kind, url FROM calendar_source WHERE deleted = 0")
+        .fetch_all(pool)
+        .await?;
+    Ok(sources)
+}
+
+/// Remove a source and hide the blocks that belong to it.
+/// Blocks that another feed still contains come back, with the same id,
+/// the next time that feed is imported. Returns how many blocks were hidden.
+pub async fn remove_source(pool: &SqlitePool, source_id: &str) -> Result<u32> {
+    let now = now_text();
+    let mut transaction = pool.begin().await?;
+
+    sqlx::query("UPDATE calendar_source SET deleted = 1, updated_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(source_id)
+        .execute(&mut *transaction)
+        .await?;
+
+    let result = sqlx::query(
+        "UPDATE class_block SET deleted = 1, updated_at = ? WHERE source_id = ? AND deleted = 0",
+    )
+    .bind(&now)
+    .bind(source_id)
+    .execute(&mut *transaction)
+    .await?;
+
+    transaction.commit().await?;
+    Ok(result.rows_affected() as u32)
+}
+
+/// Find a source by the first characters of its id, as the `feeds` command shows them.
+pub async fn find_source_id(pool: &SqlitePool, start_of_id: &str) -> Result<String> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM calendar_source WHERE deleted = 0 AND id LIKE ?")
+            .bind(format!("{start_of_id}%"))
+            .fetch_all(pool)
+            .await?;
+    match ids.as_slice() {
+        [id] => Ok(id.clone()),
+        [] => bail!("no feed with an id starting with {start_of_id}"),
+        _ => bail!("more than one feed starts with {start_of_id}, type more characters"),
+    }
+}
+
+/// Add an "ignore" rule on the title, for all sources, and apply it right away.
+/// Returns how many blocks changed.
+pub async fn add_title_rule(pool: &SqlitePool, pattern: &str) -> Result<u32> {
     sqlx::query(
         "INSERT INTO filter_rule (id, field, pattern, updated_at) VALUES (?, 'title', ?, ?)",
     )
@@ -79,7 +134,98 @@ pub async fn add_title_rule(pool: &SqlitePool, pattern: &str) -> Result<()> {
     .bind(now_text())
     .execute(pool)
     .await?;
+    apply_rules(pool).await
+}
+
+/// Remove a rule and apply the remaining rules right away.
+/// Returns how many blocks changed.
+pub async fn remove_rule(pool: &SqlitePool, rule_id: &str) -> Result<u32> {
+    sqlx::query("UPDATE filter_rule SET deleted = 1, updated_at = ? WHERE id = ?")
+        .bind(now_text())
+        .bind(rule_id)
+        .execute(pool)
+        .await?;
+    apply_rules(pool).await
+}
+
+/// Check every block against the current rules again.
+/// Only blocks whose result changes are written, so `updated_at` stays meaningful.
+/// Returns how many blocks changed.
+pub async fn apply_rules(pool: &SqlitePool) -> Result<u32> {
+    let rules = filter_rules(pool).await?;
+    let blocks: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, title, location, description FROM class_block WHERE deleted = 0",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let now = now_text();
+    let mut changed = 0;
+    let mut transaction = pool.begin().await?;
+
+    for (id, title, location, description) in blocks {
+        let ignored =
+            filter::is_ignored(&title, location.as_deref(), description.as_deref(), &rules);
+
+        let result = sqlx::query(
+            "UPDATE class_block SET ignored_by_rule = ?, updated_at = ?
+             WHERE id = ? AND ignored_by_rule != ?",
+        )
+        .bind(ignored)
+        .bind(&now)
+        .bind(&id)
+        .bind(ignored)
+        .execute(&mut *transaction)
+        .await?;
+        changed += result.rows_affected() as u32;
+    }
+
+    transaction.commit().await?;
+    Ok(changed)
+}
+
+/// Set the manual exception for one block:
+/// Some(true) = always ignore, Some(false) = never ignore, None = follow the rules again.
+pub async fn set_ignored_override(
+    pool: &SqlitePool,
+    block_id: &str,
+    ignored: Option<bool>,
+) -> Result<()> {
+    sqlx::query("UPDATE class_block SET ignored_override = ?, updated_at = ? WHERE id = ?")
+        .bind(ignored)
+        .bind(now_text())
+        .bind(block_id)
+        .execute(pool)
+        .await?;
     Ok(())
+}
+
+/// Find a block by the first characters of its id, as the `week` command shows them.
+pub async fn find_block_id(pool: &SqlitePool, start_of_id: &str) -> Result<String> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM class_block WHERE deleted = 0 AND id LIKE ?")
+            .bind(format!("{start_of_id}%"))
+            .fetch_all(pool)
+            .await?;
+    match ids.as_slice() {
+        [id] => Ok(id.clone()),
+        [] => bail!("no block with an id starting with {start_of_id}"),
+        _ => bail!("more than one block starts with {start_of_id}, type more characters"),
+    }
+}
+
+/// Find a rule by the first characters of its id, as the `rules` command shows them.
+pub async fn find_rule_id(pool: &SqlitePool, start_of_id: &str) -> Result<String> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM filter_rule WHERE deleted = 0 AND id LIKE ?")
+            .bind(format!("{start_of_id}%"))
+            .fetch_all(pool)
+            .await?;
+    match ids.as_slice() {
+        [id] => Ok(id.clone()),
+        [] => bail!("no rule with an id starting with {start_of_id}"),
+        _ => bail!("more than one rule starts with {start_of_id}, type more characters"),
+    }
 }
 
 /// All active filter rules.
@@ -134,6 +280,7 @@ pub struct SyncResult {
 /// - New UID: insert a new block.
 /// - Known UID: update it. If the time changed, mark it as "moved".
 ///   The block keeps its id, so linked activities stay attached.
+///   It now belongs to this source, and comes back if its old source was removed.
 /// - A future block that is no longer in the feed: mark it as "cancelled"
 ///   instead of deleting it.
 pub async fn save_feed(
@@ -150,7 +297,12 @@ pub async fn save_feed(
     for event in events {
         let start = time_text(event.start);
         let end = time_text(event.end);
-        let ignored = filter::is_ignored(event, &rules);
+        let ignored = filter::is_ignored(
+            &event.title,
+            event.location.as_deref(),
+            event.description.as_deref(),
+            &rules,
+        );
 
         // "E702010A. Signalen en systemen GR02, werkcollege" -> course + kind.
         let parsed = title::parse(&event.title);
@@ -203,12 +355,15 @@ pub async fn save_feed(
 
                 let sql = format!(
                     "UPDATE class_block
-                     SET course_id = ?, kind = ?, title = ?, location = ?, description = ?, start_at = ?, end_at = ?,
+                     SET source_id = ?, deleted = 0,
+                         course_id = ?, kind = ?, title = ?, location = ?, description = ?,
+                         start_at = ?, end_at = ?,
                          ignored_by_rule = ?, status = {status_sql}, updated_at = ?
                      WHERE ical_uid = ?"
                 );
 
                 sqlx::query(&sql)
+                    .bind(source_id)
                     .bind(&course_id)
                     .bind(&kind)
                     .bind(&event.title)
@@ -257,6 +412,81 @@ pub async fn save_feed(
 
     transaction.commit().await?;
     Ok(result)
+}
+
+/// Import past blocks once, from a schedule downloaded by hand (TimeEdit's
+/// "Download > iCal"). Subscriptions leave out everything older than 14 days,
+/// so this is how the start of the semester gets in.
+///
+/// - Only blocks that started before now are added; the live feed handles the rest.
+/// - A block that Lockin already has (same UID, or same title and start time) is skipped,
+///   so it never overwrites what the live feed saved.
+/// - The file is not saved as a feed: `sync` never reads it again.
+///
+/// Returns how many blocks were added.
+pub async fn import_history(pool: &SqlitePool, events: &[FeedEvent]) -> Result<u32> {
+    let rules = filter_rules(pool).await?;
+    let now = Utc::now();
+    let mut added = 0;
+    let mut transaction = pool.begin().await?;
+
+    for event in events {
+        if event.start >= now {
+            continue;
+        }
+
+        let start = time_text(event.start);
+        let known: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM class_block
+             WHERE ical_uid = ? OR (title = ? AND start_at = ?)",
+        )
+        .bind(&event.uid)
+        .bind(&event.title)
+        .bind(&start)
+        .fetch_one(&mut *transaction)
+        .await?;
+        if known > 0 {
+            continue;
+        }
+
+        let parsed = title::parse(&event.title);
+        let course_id = match &parsed {
+            Some(t) => Some(course_id_for(&mut transaction, &t.code, &t.course).await?),
+            None => None,
+        };
+        let kind = parsed.and_then(|t| t.kind);
+        let ignored = filter::is_ignored(
+            &event.title,
+            event.location.as_deref(),
+            event.description.as_deref(),
+            &rules,
+        );
+
+        // No source_id: the block doesn't belong to a feed that gets synced.
+        sqlx::query(
+            "INSERT INTO class_block
+               (id, ical_uid, course_id, kind, title, location, description,
+                start_at, end_at, ignored_by_rule, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(new_id())
+        .bind(&event.uid)
+        .bind(&course_id)
+        .bind(&kind)
+        .bind(&event.title)
+        .bind(&event.location)
+        .bind(&event.description)
+        .bind(&start)
+        .bind(time_text(event.end))
+        .bind(ignored)
+        .bind(now_text())
+        .execute(&mut *transaction)
+        .await?;
+        added += 1;
+    }
+
+    transaction.commit().await?;
+    Ok(added)
 }
 
 /// All blocks that start between `from` and `to`, sorted by start time.
