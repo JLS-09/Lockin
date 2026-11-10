@@ -11,8 +11,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 /// don't need their own sqlx dependency.
 pub type Pool = SqlitePool;
 
-use crate::filter;
 use crate::model::{CalendarSource, ClassBlock, Course, FeedEvent, FilterRule};
+use crate::{activity, filter};
 use crate::{new_id, now_text, title};
 
 /// Open (or create) the database file and run any new migrations.
@@ -181,6 +181,8 @@ pub async fn apply_rules(pool: &SqlitePool) -> Result<u32> {
     }
 
     transaction.commit().await?;
+    // Blocks that are no longer ignored get their template activities.
+    activity::apply_templates(pool).await?;
     Ok(changed)
 }
 
@@ -197,6 +199,7 @@ pub async fn set_ignored_override(
         .bind(block_id)
         .execute(pool)
         .await?;
+    activity::apply_templates(pool).await?;
     Ok(())
 }
 
@@ -248,10 +251,12 @@ async fn course_id_for(conn: &mut SqliteConnection, code: &str, name: &str) -> R
     }
 
     let id = new_id();
-    sqlx::query("INSERT INTO course (id, name, code, updated_at) VALUES (?, ?, ?, ?)")
+    let color = activity::next_course_color(&mut *conn).await?;
+    sqlx::query("INSERT INTO course (id, name, code, color, updated_at) VALUES (?, ?, ?, ?, ?)")
         .bind(&id)
         .bind(name)
         .bind(code)
+        .bind(color)
         .bind(now_text())
         .execute(&mut *conn)
         .await?;
@@ -261,7 +266,7 @@ async fn course_id_for(conn: &mut SqliteConnection, code: &str, name: &str) -> R
 /// All courses, sorted by name.
 pub async fn courses(pool: &SqlitePool) -> Result<Vec<Course>> {
     let courses =
-        sqlx::query_as("SELECT id, code, name FROM course WHERE deleted = 0 ORDER BY name")
+        sqlx::query_as("SELECT id, code, name, color FROM course WHERE deleted = 0 ORDER BY name")
             .fetch_all(pool)
             .await?;
     Ok(courses)
@@ -411,6 +416,8 @@ pub async fn save_feed(
         .await?;
 
     transaction.commit().await?;
+    // New blocks get the activities of their course's templates.
+    activity::apply_templates(pool).await?;
     Ok(result)
 }
 
@@ -486,6 +493,7 @@ pub async fn import_history(pool: &SqlitePool, events: &[FeedEvent]) -> Result<u
     }
 
     transaction.commit().await?;
+    activity::apply_templates(pool).await?;
     Ok(added)
 }
 
