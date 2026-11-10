@@ -1,0 +1,23 @@
+[package]
+name = "lockin-app"
+description = "Lockin desktop app (Tauri)"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the library name different from the binary name,
+# which avoids a name clash on Windows (https://github.com/rust-lang/cargo/issues/8519).
+name = "lockin_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+lockin-core.workspace = true

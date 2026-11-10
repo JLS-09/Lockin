@@ -1,0 +1,40 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/lockin-core",
+    "crates/lockin-daemon",
+    "crates/lockin-helper",
+    "app/src-tauri",
+]
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+authors = ["JLS <https://github.com/JLS-09>"]
+repository = "https://github.com/JLS-09/Lockin"
+version = "0.1.0"
+
+# All shared dependency versions live here.
+# A crate uses them with e.g. `tokio.workspace = true`.
+[workspace.dependencies]
+lockin-core = { path = "crates/lockin-core" }
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", default-features = false, features = ["sqlite", "runtime-tokio", "migrate", "macros"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+chrono-tz = "0.10"
+icalendar = { version = "0.16", features = ["chrono-tz"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+directories = "6"
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Profiles only work at the workspace root; in a member crate Cargo ignores them.
+# Small, fast release binaries (see https://tauri.app/concept/size/).
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
