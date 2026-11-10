@@ -6,6 +6,7 @@
 //!   lockin-daemon sync-file <file.ics>    same, from a saved file
 //!   lockin-daemon ignore <text>           ignore blocks whose title contains <text>
 //!   lockin-daemon week                    show this week's blocks
+//!   lockin-daemon courses                 list the courses found in the schedule
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, TimeZone, Utc};
@@ -46,6 +47,11 @@ async fn main() -> Result<()> {
             println!("Rule added. Run sync again to apply it.");
         }
         (Some("week"), _) => show_week(&pool).await?,
+        (Some("courses"), _) => {
+            for course in db::courses(&pool).await? {
+                println!("{}  {}", course.code.unwrap_or_default(), course.name);
+            }
+        }
         _ => bail!("usage: lockin-daemon sync <url> | sync-file <file.ics> | ignore <text> | week"),
     }
 

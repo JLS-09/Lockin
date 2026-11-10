@@ -43,17 +43,33 @@ pub fn parse(ics_text: &str) -> Result<Vec<FeedEvent>> {
             continue;
         };
 
+        let description = event.get_description().map(|s| s.to_string());
+
+        // Some classes have no LOCATION but a "Lokaal: ..." line in the description.
+        let location = match event.get_location() {
+            Some(location) if !location.trim().is_empty() => Some(location.to_string()),
+            _ => description.as_deref().and_then(room_from_description),
+        };
+
         events.push(FeedEvent {
             uid: uid.to_string(),
             title: event.get_summary().unwrap_or("(no title)").to_string(),
-            location: event.get_location().map(|s| s.to_string()),
-            description: event.get_description().map(|s| s.to_string()),
+            location,
+            description,
             start,
             end,
         });
     }
 
     Ok(events)
+}
+
+/// The room from a "Lokaal: GSCHD.1.106" line in the description, if there is one.
+fn room_from_description(description: &str) -> Option<String> {
+    description
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Lokaal:"))
+        .map(|room| room.trim().to_string())
 }
 
 /// Convert an iCal time to UTC.

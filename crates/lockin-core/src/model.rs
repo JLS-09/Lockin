@@ -18,6 +18,8 @@ pub struct FeedEvent {
 pub struct ClassBlock {
     pub id: String,
     pub ical_uid: Option<String>,
+    pub course_id: Option<String>,
+    pub kind: Option<String>,
     pub title: String,
     pub location: Option<String>,
     pub start_at: String,
@@ -40,4 +42,12 @@ pub struct FilterRule {
     pub id: String,
     pub field: String,
     pub pattern: String,
+}
+
+/// A course, e.g. "Signalen en systemen" with code E702010A.
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct Course {
+    pub id: String,
+    pub code: Option<String>,
+    pub name: String,
 }

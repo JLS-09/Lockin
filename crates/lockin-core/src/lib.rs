@@ -6,6 +6,7 @@ pub mod filter;
 pub mod model;
 pub mod paths;
 pub mod timeedit;
+pub mod title;
 
 /// The current time as RFC 3339 text in UTC, the format we store in SQLite.
 pub fn now_text() -> String {

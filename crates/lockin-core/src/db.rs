@@ -4,6 +4,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use chrono::{DateTime, SecondsFormat, Utc};
+use sqlx::SqliteConnection;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 /// The database connection pool. Re-exported so the app and daemon
@@ -11,8 +12,8 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 pub type Pool = SqlitePool;
 
 use crate::filter;
-use crate::model::{ClassBlock, FeedEvent, FilterRule};
-use crate::{new_id, now_text};
+use crate::model::{ClassBlock, Course, FeedEvent, FilterRule};
+use crate::{new_id, now_text, title};
 
 /// Open (or create) the database file and run any new migrations.
 pub async fn open(file: &Path) -> Result<SqlitePool> {
@@ -89,6 +90,37 @@ pub async fn filter_rules(pool: &SqlitePool) -> Result<Vec<FilterRule>> {
     Ok(rules)
 }
 
+/// Find the course with this code, or add it. Returns its id.
+async fn course_id_for(conn: &mut SqliteConnection, code: &str, name: &str) -> Result<String> {
+    let existing: Option<String> = sqlx::query_scalar("SELECT id FROM course WHERE code = ?")
+        .bind(code)
+        .fetch_optional(&mut *conn)
+        .await?;
+
+    if let Some(id) = existing {
+        return Ok(id);
+    }
+
+    let id = new_id();
+    sqlx::query("INSERT INTO course (id, name, code, updated_at) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(name)
+        .bind(code)
+        .bind(now_text())
+        .execute(&mut *conn)
+        .await?;
+    Ok(id)
+}
+
+/// All courses, sorted by name.
+pub async fn courses(pool: &SqlitePool) -> Result<Vec<Course>> {
+    let courses =
+        sqlx::query_as("SELECT id, code, name FROM course WHERE deleted = 0 ORDER BY name")
+            .fetch_all(pool)
+            .await?;
+    Ok(courses)
+}
+
 /// What one sync changed.
 #[derive(Debug, Default, PartialEq)]
 pub struct SyncResult {
@@ -120,6 +152,14 @@ pub async fn save_feed(
         let end = time_text(event.end);
         let ignored = filter::is_ignored(event, &rules);
 
+        // "E702010A. Signalen en systemen GR02, werkcollege" -> course + kind.
+        let parsed = title::parse(&event.title);
+        let course_id = match &parsed {
+            Some(t) => Some(course_id_for(&mut transaction, &t.code, &t.course).await?),
+            None => None,
+        };
+        let kind = parsed.and_then(|t| t.kind);
+
         let existing: Option<(String, String)> =
             sqlx::query_as("SELECT start_at, end_at FROM class_block WHERE ical_uid = ?")
                 .bind(&event.uid)
@@ -130,13 +170,15 @@ pub async fn save_feed(
             None => {
                 sqlx::query(
                     "INSERT INTO class_block
-                       (id, source_id, ical_uid, title, location, description,
+                       (id, source_id, ical_uid, course_id, kind, title, location, description,
                         start_at, end_at, ignored_by_rule, updated_at)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 )
                 .bind(new_id())
                 .bind(source_id)
                 .bind(&event.uid)
+                .bind(&course_id)
+                .bind(&kind)
                 .bind(&event.title)
                 .bind(&event.location)
                 .bind(&event.description)
@@ -161,12 +203,14 @@ pub async fn save_feed(
 
                 let sql = format!(
                     "UPDATE class_block
-                     SET title = ?, location = ?, description = ?, start_at = ?, end_at = ?,
+                     SET course_id = ?, kind = ?, title = ?, location = ?, description = ?, start_at = ?, end_at = ?,
                          ignored_by_rule = ?, status = {status_sql}, updated_at = ?
                      WHERE ical_uid = ?"
                 );
 
                 sqlx::query(&sql)
+                    .bind(&course_id)
+                    .bind(&kind)
                     .bind(&event.title)
                     .bind(&event.location)
                     .bind(&event.description)
@@ -222,7 +266,7 @@ pub async fn blocks_between(
     to: DateTime<Utc>,
 ) -> Result<Vec<ClassBlock>> {
     let blocks = sqlx::query_as(
-        "SELECT id, ical_uid, title, location, start_at, end_at,
+        "SELECT id, ical_uid, course_id, kind, title, location, start_at, end_at,
                 ignored_by_rule, ignored_override, status
          FROM class_block
          WHERE deleted = 0 AND start_at >= ? AND start_at < ?
