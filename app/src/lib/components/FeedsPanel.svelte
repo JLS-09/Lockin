@@ -38,7 +38,9 @@
     </div>
   {/each}
 
-  <p class="note">{t("feeds.uforaSoon")}</p>
+  <p class="note">
+    {feeds.some((f) => f.kind === "ufora") ? t("feeds.uforaNote") : t("feeds.uforaAdd")}
+  </p>
   <a href="/settings#schedule">{t("feeds.manage")}</a>
 </section>
 

@@ -1,7 +1,8 @@
 <script lang="ts">
   // "Coming 2 weeks" from the Urgent mockup: from today to the end of next week,
-  // grouped as "This week" and "Week 47". It lists deadlines ("Lab report 2 due")
-  // and classes that were moved or cancelled; regular classes are in the week view.
+  // grouped as "This week" and "Week 47". It lists deadlines ("Lab report 2 due",
+  // with "· moved" or "· cancelled" for Ufora changes) and classes that were moved
+  // or cancelled; regular classes are in the week view.
   import { isIgnored, type ClassBlock, type Course, type Deadline } from "$lib/api";
   import { addDays, formatDate, isoDate, isoWeek, t } from "$lib/i18n/index.svelte";
   import { mondayOf } from "$lib/urgent/when";
@@ -41,15 +42,22 @@
     const lines: Line[] = [];
     for (const deadline of deadlines) {
       const due = new Date(deadline.dueAt);
-      if (deadline.status === "cancelled" || !inRange(due)) continue;
+      if (!inRange(due)) continue;
       const course = deadline.courseId ? courses.get(deadline.courseId) : undefined;
       lines.push({
         key: `deadline:${deadline.id}`,
         time: due,
         text: t("coming.due", { title: deadline.title }),
-        note: deadline.done ? t("coming.done") : null,
+        note:
+          deadline.status === "cancelled"
+            ? t("coming.cancelled")
+            : deadline.done
+              ? t("coming.done")
+              : deadline.status === "moved"
+                ? t("coming.moved")
+                : null,
         color: course?.color ?? null,
-        faded: deadline.done,
+        faded: deadline.done || deadline.status === "cancelled",
       });
     }
     for (const block of blocks) {

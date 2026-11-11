@@ -9,11 +9,9 @@ A personal desktop app that keeps track of my class schedule and helps me actual
 it imports the schedule from TimeEdit, tracks what still needs doing per class, and runs
 study sessions that block distracting apps and websites.
 
-> **Status:** phases 1 and 2 of 6 are done: the TimeEdit import and the class tracking app
-> (week view, activities, templates, semester overview) work. Phase 3 is under way: the
-> Urgent page, manual deadlines and the Urgent panel on the week page work; the Ufora
-> feed is next. Study sessions and blocking
-> come in phase 4. Built first for CachyOS with KDE Plasma, with Windows and macOS support
+> **Status:** phases 1 to 3 of 6 are done: the TimeEdit import, the class tracking app
+> (week view, activities, templates, semester overview) and deadlines (by hand and from
+> Ufora, with the Urgent list) work. Study sessions and blocking come in phase 4. Built first for CachyOS with KDE Plasma, with Windows and macOS support
 > planned later.
 
 ## Features
@@ -34,14 +32,16 @@ study sessions that block distracting apps and websites.
 - **Semester overview:** weeks × courses with a status per cell and the share done per course
 - **Urgent & deadlines:** one list of open activities and deadlines, most urgent first
   (how long something has been open, how close a deadline is), with deadlines you add
-  yourself (D), "Coming 2 weeks" and the feeds' last sync
+  yourself (D) and the ones from Ufora, "Coming 2 weeks" and the feeds' last sync
+- **Deadlines from Ufora:** paste the Ufora calendar link next to the TimeEdit one; due
+  dates are linked to their course by code, moved and cancelled ones are marked, and each
+  opens its page in Ufora
 - **Filter rules** to ignore blocks you don't attend (e.g. "zelfstandig werk"), with a
   manual exception per block
 - **Dutch and English**, switchable without a restart; keyboard shortcuts throughout
 
 **Planned**
 
-- **Deadlines from Ufora** (phase 3)
 - **Study sessions** started by a background service, with app and website blocking,
   break credit, tray icon and notifications (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
@@ -112,7 +112,8 @@ pnpm install
 pnpm tauri dev
 ```
 
-On first start the week is empty: open **Settings → Schedule** and paste your TimeEdit link.
+On first start the week is empty: open **Settings → Schedule** and paste your TimeEdit
+link, and your Ufora calendar link for deadlines.
 
 ## Importing the schedule
 
@@ -132,12 +133,25 @@ Running a sync again updates classes by their iCal UID: a class whose time chang
 `moved`, and a future class that disappears from the feed is marked `cancelled` instead of
 being deleted. Past classes stay, even after they drop out of the feed.
 
+## Deadlines from Ufora
+
+In Ufora, open the calendar, turn on **Enable calendar feeds** in its settings, choose
+**Subscribe** and copy the link. Paste it in **Settings → Schedule**, in the same field as
+the TimeEdit link: Lockin recognises it.
+
+The feed holds every event of every Ufora course, so Lockin keeps only due dates
+("… - Verwacht") and ends of availability ("… - Beschikbaarheid eindigt", "… - verloopt"),
+and only for courses it knows from TimeEdit (matched on the course code). A deadline that
+is already past the first time it comes in counts as done. Like classes, deadlines are
+matched on their UID: a changed due date is marked moved, one that leaves the feed is
+marked cancelled.
+
 ### From the command line
 
 The daemon is also a small command-line tool on the same database:
 
 ```bash
-cargo run -p lockin-daemon -- sync "<TimeEdit iCal URL>"  # save the feed and import it
+cargo run -p lockin-daemon -- sync "<TimeEdit or Ufora URL>"  # save the feed and import it
 cargo run -p lockin-daemon -- sync                        # later: fetch all saved feeds again
 cargo run -p lockin-daemon -- ignore "zelfstandig werk"   # add a filter rule (applies right away)
 cargo run -p lockin-daemon -- week                        # this week's classes, with short ids
@@ -178,7 +192,7 @@ checks on every push.
 
 1. **Foundation:** workspace, database, TimeEdit import, filter rules *(done)*
 2. **Tracking classes:** week view, activities, templates, semester overview, NL/EN *(done)*
-3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(in progress)*
+3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(done)*
 4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications
 5. **Cloud sync** with Supabase
 6. **Motivation and insight:** points, streaks, statistics and the shop

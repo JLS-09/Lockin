@@ -6,7 +6,7 @@
   // like all-day events in a calendar: most are due at 23:59, after the grid ends.
   import type { Activity, ClassBlock, Course, Deadline, FilterRule } from "$lib/api";
   import { isIgnored } from "$lib/api";
-  import { formatDate, formatTime, isoDate, t, tn } from "$lib/i18n/index.svelte";
+  import { formatDate, formatDay, formatTime, isoDate, t, tn } from "$lib/i18n/index.svelte";
   import { ignoringRule, kindLabel } from "$lib/week/labels";
   import { SLOT_MINUTES, columnForDate, rowForTime, type WeekLayout } from "$lib/week/layout";
   import { blockProgress } from "$lib/week/status";
@@ -61,11 +61,15 @@
     return new Date(deadline.dueAt) < now ? "late" : "";
   }
 
-  /** "Lab report 2 · Databanken · due 23:59" for the tooltip. */
+  /** "Lab report 2 · Databanken · due 23:59 · moved, was Mon 16 Nov" for the tooltip. */
   function deadlineTooltip(deadline: Deadline): string {
     const course = deadline.courseId ? courses.get(deadline.courseId)?.name : undefined;
     const due = t("week.deadlineDue", { time: formatTime(new Date(deadline.dueAt)) });
-    return [deadline.title, course, due].filter(Boolean).join(" · ");
+    const moved =
+      deadline.status === "moved" && deadline.movedFrom
+        ? t("urgent.movedFrom", { day: formatDay(new Date(deadline.movedFrom)) })
+        : undefined;
+    return [deadline.title, course, due, moved].filter(Boolean).join(" · ");
   }
 
   /** The time shows on the chip only when it isn't the usual 23:59. */

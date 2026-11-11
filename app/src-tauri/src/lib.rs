@@ -9,7 +9,6 @@
 //! `block_id` here is `blockId` in `invoke`.
 
 use chrono::{DateTime, NaiveDate, Utc};
-use lockin_core::db::SyncResult;
 use lockin_core::model::{
     Activity, ActivityTemplate, ClassBlock, Course, CourseKind, Deadline, FeedInfo, FeedSync,
     FilterRule, UrgentItem, WeekClasses, WeekProgress,
@@ -259,9 +258,10 @@ async fn feeds(pool: State<'_, db::Pool>) -> CommandResult<Vec<FeedInfo>> {
     import::feeds(&pool).await.map_err(message)
 }
 
-/// Save a pasted TimeEdit link and import it right away.
+/// Save a pasted TimeEdit or Ufora link and import it right away.
+/// `kind` in the result says which one it was.
 #[tauri::command]
-async fn add_feed(pool: State<'_, db::Pool>, url: String) -> CommandResult<SyncResult> {
+async fn add_feed(pool: State<'_, db::Pool>, url: String) -> CommandResult<FeedSync> {
     import::add_feed(&pool, &url).await.map_err(message)
 }
 
@@ -272,7 +272,7 @@ async fn sync_feeds(pool: State<'_, db::Pool>) -> CommandResult<Vec<FeedSync>> {
 }
 
 /// Remove a feed, then sync the others, so classes they also have come back.
-/// Returns how many classes the removed feed held.
+/// Returns how many classes (TimeEdit) or deadlines (Ufora) the removed feed held.
 #[tauri::command]
 async fn remove_feed(pool: State<'_, db::Pool>, source_id: String) -> CommandResult<u32> {
     let hidden = db::remove_source(&pool, &source_id)
@@ -350,6 +350,9 @@ pub fn run() {
     glib::set_prgname(Some("io.github.jls_09.lockin"));
 
     tauri::Builder::default()
+        // "Open in Ufora" opens links in the browser; only Ufora links are
+        // allowed (capabilities/default.json).
+        .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             // The same database file the daemon uses, see lockin_core::paths.
             let file = paths::database_file()?;

@@ -1,7 +1,8 @@
 <script lang="ts">
-  // Settings → Schedule: the TimeEdit feeds. Paste a link to add one (it syncs
-  // right away), sync all again, remove one, or import the earlier weeks from
-  // a downloaded file. Not in the mockups; built in the style of the panels.
+  // Settings → Schedule: the feeds, TimeEdit (classes) and Ufora (deadlines).
+  // Paste either link to add one (Lockin tells them apart and syncs right away),
+  // sync all again, remove one, or import the earlier weeks from a downloaded
+  // TimeEdit file. Not in the mockups; built in the style of the panels.
   // The full link is never shown: it holds a personal key.
   import { api, type FeedInfo } from "$lib/api";
   import { formatAgo, t, tn } from "$lib/i18n/index.svelte";
@@ -47,7 +48,7 @@
     run(async () => {
       const result = await api.addFeed(pasted);
       url = "";
-      return tn("schedule.added", result.added);
+      return tn(result.kind === "ufora" ? "schedule.addedDeadlines" : "schedule.added", result.added);
     });
   }
 
@@ -71,7 +72,8 @@
 
   function remove(feed: FeedInfo) {
     confirming = null;
-    run(async () => tn("schedule.removed", await api.removeFeed(feed.id)));
+    const key = feed.kind === "ufora" ? "schedule.removedDeadlines" : "schedule.removed";
+    run(async () => tn(key, await api.removeFeed(feed.id)));
   }
 
   // The file is read here and its text sent to Rust, so the app needs no file access.
@@ -107,14 +109,19 @@
       {#each feeds as feed (feed.id)}
         <li>
           {#if confirming === feed.id}
-            <span class="confirm">{t("schedule.confirmRemove")}</span>
+            <span class="confirm">{t(feed.kind === "ufora" ? "schedule.confirmRemoveUfora" : "schedule.confirmRemove")}</span>
             <button class="btn btn-small btn-danger" disabled={busy} onclick={() => remove(feed)}>{t("schedule.remove")}</button>
             <button class="btn btn-small" onclick={() => (confirming = null)}>{t("template.cancel")}</button>
           {:else}
             <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6h16v14H4zM4 10h16M9 3v4M15 3v4" /></svg>
             <span class="text">
-              <span class="ellipsis" title={feed.origin}>{t("schedule.feedTitle", { origin: feed.origin })}</span>
-              <span class="sub">{tn("schedule.classes", feed.classes)} · {lastSync(feed)}</span>
+              {#if feed.kind === "ufora"}
+                <span class="ellipsis" title={feed.origin}>{t("schedule.uforaTitle", { origin: feed.origin })}</span>
+                <span class="sub">{tn("schedule.deadlines", feed.deadlines)} · {lastSync(feed)}</span>
+              {:else}
+                <span class="ellipsis" title={feed.origin}>{t("schedule.feedTitle", { origin: feed.origin })}</span>
+                <span class="sub">{tn("schedule.classes", feed.classes)} · {lastSync(feed)}</span>
+              {/if}
             </span>
             <button class="tool" aria-label={t("schedule.remove")} title={t("schedule.remove")} onclick={() => (confirming = feed.id)}>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>

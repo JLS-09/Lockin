@@ -2,10 +2,11 @@
   // One line of the Urgent list, as in the Urgent mockup: the check button with
   // the status icon, the title with its course, a tag (Activity, Manual, Ufora)
   // and how long it's been open or when it's due.
-  // Clicking the title opens the activity's week, or the deadline's dialog.
+  // Clicking the title opens the activity's week, the dialog of a deadline you
+  // added, or a Ufora deadline's page in Ufora.
   // A deadline added by hand also gets a bin on hover, and the Delete key.
   import type { Course, UrgentItem } from "$lib/api";
-  import { t } from "$lib/i18n/index.svelte";
+  import { formatDay, t } from "$lib/i18n/index.svelte";
   import { urgentIcon, whenText } from "$lib/urgent/when";
   import StatusIcon from "./StatusIcon.svelte";
 
@@ -39,6 +40,19 @@
 
   const when = $derived(done ? t("urgent.doneNow") : whenText(item, now));
 
+  // "moved, was Mon 16 Nov" for a Ufora deadline whose due date changed.
+  const moved = $derived(
+    item.movedFrom ? t("urgent.movedFrom", { day: formatDay(new Date(item.movedFrom)) }) : null,
+  );
+
+  const openTitle = $derived(
+    item.kind === "activity"
+      ? t("urgent.openWeek")
+      : item.sourceId
+        ? t("deadline.openInUfora")
+        : t("deadline.edit"),
+  );
+
   // The status names, as a screen reader says them.
   const statusLabels = {
     behind: "status.behind",
@@ -70,15 +84,18 @@
 
   <button
     class="text"
-    title={item.kind === "activity" ? t("urgent.openWeek") : t("deadline.edit")}
+    title={openTitle}
     onclick={onOpen}
     onkeydown={onKeydown}
   >
     <span class="title" class:done title={item.title}>{item.title}</span>
-    {#if course}
-      <span class="course" title={course.name}>
-        <span class="dot" style:background={course.color}></span>
-        <span class="ellipsis">{course.name}</span>
+    {#if course || moved}
+      <span class="course" title={[course?.name, moved].filter(Boolean).join(" · ")}>
+        {#if course}
+          <span class="dot" style:background={course.color}></span>
+          <span class="ellipsis">{course.name}</span>
+        {/if}
+        {#if moved}<span class="moved">{course ? `· ${moved}` : moved}</span>{/if}
       </span>
     {/if}
   </button>
@@ -170,6 +187,11 @@
     min-width: 0;
     font-size: var(--text-sm);
     color: var(--text-muted);
+  }
+
+  .moved {
+    flex: none;
+    color: var(--text);
   }
 
   .dot {

@@ -87,6 +87,8 @@ struct DeadlineRow {
     course_id: Option<String>,
     due_at: String,
     source_id: Option<String>,
+    url: Option<String>,
+    moved_from: Option<String>,
 }
 
 /// Parse a time we stored ourselves (RFC 3339).
@@ -135,6 +137,8 @@ pub async fn list(pool: &SqlitePool, now: DateTime<Utc>) -> Result<Vec<UrgentIte
             open_since: Some(open_since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)),
             due_at: None,
             source_id: None,
+            url: None,
+            moved_from: None,
             status: activity_status(days_open).to_string(),
             score: activity_score(days_open),
         });
@@ -142,7 +146,7 @@ pub async fn list(pool: &SqlitePool, now: DateTime<Utc>) -> Result<Vec<UrgentIte
 
     // Deadlines that still need doing.
     let deadlines: Vec<DeadlineRow> = sqlx::query_as(
-        "SELECT id, title, course_id, due_at, source_id FROM deadline
+        "SELECT id, title, course_id, due_at, source_id, url, moved_from FROM deadline
          WHERE deleted = 0 AND done = 0 AND status != 'cancelled'",
     )
     .fetch_all(pool)
@@ -160,6 +164,8 @@ pub async fn list(pool: &SqlitePool, now: DateTime<Utc>) -> Result<Vec<UrgentIte
             open_since: None,
             due_at: Some(row.due_at),
             source_id: row.source_id,
+            url: row.url,
+            moved_from: row.moved_from,
             status: deadline_status(days_left).to_string(),
             score: deadline_score(days_left),
         });

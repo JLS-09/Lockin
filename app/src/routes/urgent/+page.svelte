@@ -10,7 +10,7 @@
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
-  import type { Deadline, UrgentItem } from "$lib/api";
+  import { api, type Deadline, type UrgentItem } from "$lib/api";
   import ComingPanel from "$lib/components/ComingPanel.svelte";
   import DeadlineDialog from "$lib/components/DeadlineDialog.svelte";
   import FeedsPanel from "$lib/components/FeedsPanel.svelte";
@@ -56,10 +56,17 @@
     return () => clearInterval(timer);
   });
 
-  /** Activities open their week with their class selected; deadlines added by hand open the dialog. */
+  /**
+   * Activities open their week with their class selected; Ufora deadlines open
+   * their page in Ufora; deadlines added by hand open the dialog.
+   */
   function open(item: UrgentItem) {
     if (item.kind === "activity") {
       goto(weekHref(item));
+      return;
+    }
+    if (item.sourceId) {
+      if (item.url) openLink(item.url);
       return;
     }
     const deadline = data.deadline(item.id);
@@ -73,6 +80,14 @@
       const deadline = data.deadline(item.id);
       if (deadline) remove(deadline);
     };
+  }
+
+  async function openLink(url: string) {
+    try {
+      await api.openInBrowser(url);
+    } catch (e) {
+      data.error = String(e);
+    }
   }
 
   async function save(id: string | null, fields: DeadlineFields): Promise<boolean> {

@@ -1,31 +1,59 @@
 //! Fetching calendar sources and saving their events.
 //! Used by the app (Settings → Schedule), by `lockin-daemon sync`, and by the
 //! daemon's hourly fetch in phase 4.
+//!
+//! Two kinds of feed: TimeEdit (classes) and Ufora (deadlines). You paste
+//! either link in the same place; the feed's text tells which one it is
+//! (`ufora::is_ufora_feed`).
 
 use anyhow::{Result, bail};
+use chrono::Utc;
 
 use crate::db::{self, Pool, SyncResult};
 use crate::model::{FeedEvent, FeedInfo, FeedSync};
-use crate::timeedit;
+use crate::{deadline, timeedit, ufora};
 
-/// Fetch the events of a feed without saving them.
-/// A `file://` source is read from disk, anything else is downloaded.
+/// The text of a feed. A `file://` source is read from disk, anything else is downloaded.
+pub async fn fetch_text(url: &str) -> Result<String> {
+    match url.strip_prefix("file://") {
+        Some(path) => Ok(std::fs::read_to_string(path)?),
+        None => timeedit::download(url).await,
+    }
+}
+
+/// Fetch the events of a TimeEdit feed without saving them.
 pub async fn fetch_events(url: &str) -> Result<Vec<FeedEvent>> {
-    let text = match url.strip_prefix("file://") {
-        Some(path) => std::fs::read_to_string(path)?,
-        None => timeedit::download(url).await?,
-    };
-    timeedit::parse(&text)
+    timeedit::parse(&fetch_text(url).await?)
 }
 
-/// Fetch one saved source and save its events.
+/// "ufora" or "timeedit", from the feed's text.
+fn kind_of(text: &str) -> &'static str {
+    if ufora::is_ufora_feed(text) {
+        "ufora"
+    } else {
+        "timeedit"
+    }
+}
+
+/// Save a feed's text: classes for TimeEdit, deadlines for Ufora.
+async fn save_text(pool: &Pool, source_id: &str, text: &str) -> Result<SyncResult> {
+    if ufora::is_ufora_feed(text) {
+        let deadlines = ufora::parse(text)?;
+        deadline::save_ufora(pool, source_id, &deadlines, Utc::now()).await
+    } else {
+        let events = timeedit::parse(text)?;
+        db::save_feed(pool, source_id, &events).await
+    }
+}
+
+/// Fetch one saved source and save what's in it.
 pub async fn import_source(pool: &Pool, source_id: &str, url: &str) -> Result<SyncResult> {
-    let events = fetch_events(url).await?;
-    db::save_feed(pool, source_id, &events).await
+    let text = fetch_text(url).await?;
+    save_text(pool, source_id, &text).await
 }
 
-/// Clean up a pasted TimeEdit link: trims spaces, turns `webcal://` into
-/// `https://` (TimeEdit offers both), and refuses anything that isn't a web link.
+/// Clean up a pasted link: trims spaces, turns `webcal://` into `https://`
+/// (TimeEdit and Ufora offer both), and refuses anything that isn't a web link.
 pub fn clean_feed_url(pasted: &str) -> Result<String> {
     let url = pasted.trim();
     let url = match url.strip_prefix("webcal://") {
@@ -33,26 +61,46 @@ pub fn clean_feed_url(pasted: &str) -> Result<String> {
         None => url.to_string(),
     };
     if !url.starts_with("https://") && !url.starts_with("http://") {
-        bail!("this is not a web link; copy the link from TimeEdit → Subscribe");
+        bail!(
+            "this is not a web link; copy the link from TimeEdit → Subscribe, or Ufora → Calendar → Subscribe"
+        );
     }
     Ok(url)
 }
 
-/// Save a new TimeEdit feed from a pasted link and import it right away.
-/// If the import of a new feed fails, it isn't kept, so a typo doesn't stay behind.
+/// Save a new feed from a pasted link (TimeEdit or Ufora) and import it right away.
+/// The link is downloaded first, so a typo or a dead link is never saved.
 /// A link that was already saved just syncs again.
-pub async fn add_feed(pool: &Pool, pasted_url: &str) -> Result<SyncResult> {
+pub async fn add_feed(pool: &Pool, pasted_url: &str) -> Result<FeedSync> {
     let url = clean_feed_url(pasted_url)?;
+    add_feed_text(pool, &url, &fetch_text(&url).await?).await
+}
+
+/// Save a feed whose text is already fetched (from `add_feed`, or a file for the CLI).
+pub async fn add_feed_text(pool: &Pool, url: &str, text: &str) -> Result<FeedSync> {
     let already_saved = db::sources(pool).await?.iter().any(|s| s.url == url);
-    let source_id = db::add_timeedit_source(pool, &url).await?;
-    match import_source(pool, &source_id, &url).await {
-        Ok(result) => Ok(result),
+    let kind = kind_of(text);
+    let source_id = db::add_source(pool, url, kind).await?;
+    match save_text(pool, &source_id, text).await {
+        Ok(result) => Ok(feed_sync(source_id, kind, result)),
         Err(error) => {
             if !already_saved {
                 db::remove_source(pool, &source_id).await?;
             }
             Err(error)
         }
+    }
+}
+
+fn feed_sync(source_id: String, kind: &str, result: SyncResult) -> FeedSync {
+    FeedSync {
+        source_id,
+        kind: kind.to_string(),
+        added: result.added,
+        updated: result.updated,
+        moved: result.moved,
+        cancelled: result.cancelled,
+        error: None,
     }
 }
 
@@ -63,21 +111,10 @@ pub async fn sync_all(pool: &Pool) -> Result<Vec<FeedSync>> {
     for source in db::sources(pool).await? {
         let outcome = import_source(pool, &source.id, &source.url).await;
         results.push(match outcome {
-            Ok(result) => FeedSync {
-                source_id: source.id,
-                added: result.added,
-                updated: result.updated,
-                moved: result.moved,
-                cancelled: result.cancelled,
-                error: None,
-            },
+            Ok(result) => feed_sync(source.id, &source.kind, result),
             Err(error) => FeedSync {
-                source_id: source.id,
-                added: 0,
-                updated: 0,
-                moved: 0,
-                cancelled: 0,
                 error: Some(format!("{error:#}")),
+                ..feed_sync(source.id, &source.kind, SyncResult::default())
             },
         });
     }
@@ -86,16 +123,21 @@ pub async fn sync_all(pool: &Pool) -> Result<Vec<FeedSync>> {
 
 /// The saved feeds as the app shows them, without their URLs.
 pub async fn feeds(pool: &Pool) -> Result<Vec<FeedInfo>> {
-    let counts = db::classes_per_source(pool).await?;
+    let classes = db::classes_per_source(pool).await?;
+    let deadlines = deadline::per_source(pool).await?;
+    let count = |counts: &[(String, i64)], id: &str| {
+        counts
+            .iter()
+            .find(|(source, _)| source == id)
+            .map_or(0, |(_, count)| *count)
+    };
     let feeds = db::sources(pool)
         .await?
         .into_iter()
         .map(|source| FeedInfo {
             origin: origin(&source.url),
-            classes: counts
-                .iter()
-                .find(|(id, _)| *id == source.id)
-                .map_or(0, |(_, count)| *count),
+            classes: count(&classes, &source.id),
+            deadlines: count(&deadlines, &source.id),
             id: source.id,
             kind: source.kind,
             last_fetched_at: source.last_fetched_at,
@@ -107,13 +149,16 @@ pub async fn feeds(pool: &Pool) -> Result<Vec<FeedInfo>> {
 /// Add the past classes from a downloaded TimeEdit file (its text), once.
 /// Returns (added, events in the file).
 pub async fn import_history_text(pool: &Pool, ics_text: &str) -> Result<(u32, u32)> {
+    if ufora::is_ufora_feed(ics_text) {
+        bail!("this is a Ufora file; paste the Ufora link under Schedule instead");
+    }
     let events = timeedit::parse(ics_text)?;
     let added = db::import_history(pool, &events).await?;
     Ok((added, events.len() as u32))
 }
 
 /// "cloud.timeedit.net" for a web link, the file name for a `file://` source.
-/// Never the path or query, where TimeEdit puts the personal key.
+/// Never the path or query, where TimeEdit and Ufora put the personal key.
 fn origin(url: &str) -> String {
     if let Some(path) = url.strip_prefix("file://") {
         return path.rsplit('/').next().unwrap_or(path).to_string();
@@ -148,6 +193,10 @@ mod tests {
         assert_eq!(
             origin("https://cloud.timeedit.net/ugent/web/ri6Q7XY.ics?key=secret"),
             "cloud.timeedit.net"
+        );
+        assert_eq!(
+            origin("https://ufora.ugent.be/d2l/le/calendar/feed/user/feed.ics?token=secret"),
+            "ufora.ugent.be"
         );
         assert_eq!(
             origin("file:///home/jls/Downloads/schedule.ics"),

@@ -14,7 +14,7 @@
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
-  import { isIgnored, type Activity, type ClassBlock, type Deadline } from "$lib/api";
+  import { api, isIgnored, type Activity, type ClassBlock, type Deadline } from "$lib/api";
   import BlockPanel from "$lib/components/BlockPanel.svelte";
   import ChangesBanner from "$lib/components/ChangesBanner.svelte";
   import DeadlineDialog from "$lib/components/DeadlineDialog.svelte";
@@ -178,9 +178,18 @@
     clearTimeout(toastTimer);
   }
 
-  /** A deadline chip: deadlines added by hand open the dialog (feed ones follow with Ufora). */
-  function openDeadline(deadline: Deadline) {
-    if (!deadline.sourceId) deadlineDialog?.openEdit(deadline);
+  /** A deadline chip: one added by hand opens the dialog, a Ufora one its page in Ufora. */
+  async function openDeadline(deadline: Deadline) {
+    if (!deadline.sourceId) {
+      deadlineDialog?.openEdit(deadline);
+      return;
+    }
+    if (!deadline.url) return;
+    try {
+      await api.openInBrowser(deadline.url);
+    } catch (e) {
+      data.error = String(e);
+    }
   }
 
   // From the class panel: one activity, or with "Every WPO" on, a template

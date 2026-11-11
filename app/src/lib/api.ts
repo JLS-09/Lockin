@@ -4,6 +4,7 @@
 // Dates are "YYYY-MM-DD" text; times are RFC 3339 text in UTC.
 
 import { invoke } from "@tauri-apps/api/core";
+import { openUrl } from "@tauri-apps/plugin-opener";
 
 export interface Course {
   id: string;
@@ -92,30 +93,28 @@ export interface WeekClasses {
 /** A saved feed, without its URL (it holds a personal key). */
 export interface FeedInfo {
   id: string;
-  kind: string;
-  /** "cloud.timeedit.net", or the file name. */
+  kind: "timeedit" | "ufora";
+  /** "cloud.timeedit.net", "ufora.ugent.be", or the file name. */
   origin: string;
   lastFetchedAt: string | null;
+  /** Classes in this feed (TimeEdit). */
   classes: number;
+  /** Deadlines in this feed (Ufora). */
+  deadlines: number;
 }
 
 /** What syncing one feed changed, or why it failed. */
 export interface FeedSync {
   sourceId: string;
+  /** "timeedit": the counts are classes; "ufora": deadlines. */
+  kind: "timeedit" | "ufora";
   added: number;
-  /** Known classes seen again, changed or not. */
+  /** Known classes or deadlines seen again, changed or not. */
   updated: number;
-  /** Classes whose time changed. */
+  /** Ones whose time changed. */
   moved: number;
   cancelled: number;
   error: string | null;
-}
-
-export interface SyncResult {
-  added: number;
-  updated: number;
-  moved: number;
-  cancelled: number;
 }
 
 export type DeadlineStatus = "normal" | "moved" | "cancelled";
@@ -137,6 +136,8 @@ export interface Deadline {
   /** Due time before its first move. */
   movedFrom: string | null;
   changeSeen: boolean;
+  /** Feed deadlines: where to open it in Ufora. */
+  url: string | null;
 }
 
 /** Status of an Urgent line: the icon and color it gets. */
@@ -159,6 +160,10 @@ export interface UrgentItem {
   dueAt: string | null;
   /** Deadlines: null if added by hand, else the feed it came from. */
   sourceId: string | null;
+  /** Feed deadlines: where to open it in Ufora. */
+  url: string | null;
+  /** Feed deadlines that moved: the due time before the first move. */
+  movedFrom: string | null;
   status: UrgentStatus;
   /** Higher = more urgent; the list comes sorted on it. */
   score: number;
@@ -202,6 +207,10 @@ export const api = {
   removeDeadline: (deadlineId: string) => invoke<void>("remove_deadline", { deadlineId }),
   restoreDeadline: (deadlineId: string) => invoke<void>("restore_deadline", { deadlineId }),
 
+  /** Open a Ufora page in the browser. Only ufora.ugent.be links are allowed
+   *  (src-tauri/capabilities/default.json). */
+  openInBrowser: (url: string) => openUrl(url),
+
   addTemplate: (courseId: string, kind: string | null, title: string) =>
     invoke<number>("add_template", { courseId, kind, title }),
   removeTemplate: (templateId: string) => invoke<number>("remove_template", { templateId }),
@@ -211,7 +220,8 @@ export const api = {
   acknowledgeChanges: (blockIds: string[]) => invoke<void>("acknowledge_changes", { blockIds }),
 
   feeds: () => invoke<FeedInfo[]>("feeds"),
-  addFeed: (url: string) => invoke<SyncResult>("add_feed", { url }),
+  /** A TimeEdit or Ufora link; `kind` in the result says which it was. */
+  addFeed: (url: string) => invoke<FeedSync>("add_feed", { url }),
   syncFeeds: () => invoke<FeedSync[]>("sync_feeds"),
   /** Returns how many classes the removed feed held. */
   removeFeed: (sourceId: string) => invoke<number>("remove_feed", { sourceId }),

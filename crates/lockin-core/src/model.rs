@@ -62,7 +62,7 @@ pub struct Course {
     pub color: Option<String>,
 }
 
-/// A saved iCal feed: TimeEdit now, Ufora later.
+/// A saved iCal feed: TimeEdit (classes) or Ufora (deadlines).
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct CalendarSource {
     pub id: String,
@@ -77,13 +77,15 @@ pub struct CalendarSource {
 #[serde(rename_all = "camelCase")]
 pub struct FeedInfo {
     pub id: String,
-    /// "timeedit" (or "ufora" later).
+    /// "timeedit" or "ufora".
     pub kind: String,
     /// Where it comes from without the key: "cloud.timeedit.net", or the file name.
     pub origin: String,
     pub last_fetched_at: Option<String>,
-    /// How many classes this feed holds now.
+    /// How many classes this feed holds now (TimeEdit).
     pub classes: i64,
+    /// How many deadlines this feed holds now (Ufora).
+    pub deadlines: i64,
 }
 
 /// The result of syncing one feed, for the app: what changed, or why it failed.
@@ -91,6 +93,8 @@ pub struct FeedInfo {
 #[serde(rename_all = "camelCase")]
 pub struct FeedSync {
     pub source_id: String,
+    /// "timeedit" (the counts are classes) or "ufora" (deadlines).
+    pub kind: String,
     pub added: u32,
     pub updated: u32,
     /// Classes whose time changed.
@@ -180,6 +184,8 @@ pub struct Deadline {
     pub moved_from: Option<String>,
     /// True once you've dismissed the change.
     pub change_seen: bool,
+    /// Feed deadlines: where to open it in Ufora.
+    pub url: Option<String>,
 }
 
 /// One line of the Urgent list: an open activity or a deadline.
@@ -203,6 +209,10 @@ pub struct UrgentItem {
     pub due_at: Option<String>,
     /// Deadlines: None if added by hand, else the feed it came from.
     pub source_id: Option<String>,
+    /// Feed deadlines: where to open it in Ufora.
+    pub url: Option<String>,
+    /// Feed deadlines that moved: the due time before the first move.
+    pub moved_from: Option<String>,
     /// "behind", "approaching" or "planned": the status icon and color.
     pub status: String,
     /// Higher = more urgent; the list is sorted on it. See `urgent::score`.

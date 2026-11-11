@@ -47,6 +47,11 @@ fn time_text(time: DateTime<Utc>) -> String {
 
 /// Find a TimeEdit source by URL, or add it. Returns its id.
 pub async fn add_timeedit_source(pool: &SqlitePool, url: &str) -> Result<String> {
+    add_source(pool, url, "timeedit").await
+}
+
+/// Find a source by URL, or add it as `kind` ("timeedit" or "ufora"). Returns its id.
+pub async fn add_source(pool: &SqlitePool, url: &str, kind: &str) -> Result<String> {
     let existing: Option<String> =
         sqlx::query_scalar("SELECT id FROM calendar_source WHERE url = ?")
             .bind(url)
@@ -65,14 +70,13 @@ pub async fn add_timeedit_source(pool: &SqlitePool, url: &str) -> Result<String>
     }
 
     let id = new_id();
-    sqlx::query(
-        "INSERT INTO calendar_source (id, kind, url, updated_at) VALUES (?, 'timeedit', ?, ?)",
-    )
-    .bind(&id)
-    .bind(url)
-    .bind(now_text())
-    .execute(pool)
-    .await?;
+    sqlx::query("INSERT INTO calendar_source (id, kind, url, updated_at) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(kind)
+        .bind(url)
+        .bind(now_text())
+        .execute(pool)
+        .await?;
     Ok(id)
 }
 
@@ -98,9 +102,10 @@ pub async fn classes_per_source(pool: &SqlitePool) -> Result<Vec<(String, i64)>>
     Ok(counts)
 }
 
-/// Remove a source and hide the blocks that belong to it.
+/// Remove a source and hide the blocks and deadlines that belong to it.
 /// Blocks that another feed still contains come back, with the same id,
-/// the next time that feed is imported. Returns how many blocks were hidden.
+/// the next time that feed is imported; so do deadlines when the link is added
+/// again. Returns how many blocks or deadlines were hidden.
 pub async fn remove_source(pool: &SqlitePool, source_id: &str) -> Result<u32> {
     let now = now_text();
     let mut transaction = pool.begin().await?;
@@ -111,7 +116,7 @@ pub async fn remove_source(pool: &SqlitePool, source_id: &str) -> Result<u32> {
         .execute(&mut *transaction)
         .await?;
 
-    let result = sqlx::query(
+    let blocks = sqlx::query(
         "UPDATE class_block SET deleted = 1, updated_at = ? WHERE source_id = ? AND deleted = 0",
     )
     .bind(&now)
@@ -119,8 +124,16 @@ pub async fn remove_source(pool: &SqlitePool, source_id: &str) -> Result<u32> {
     .execute(&mut *transaction)
     .await?;
 
+    let deadlines = sqlx::query(
+        "UPDATE deadline SET deleted = 1, updated_at = ? WHERE source_id = ? AND deleted = 0",
+    )
+    .bind(&now)
+    .bind(source_id)
+    .execute(&mut *transaction)
+    .await?;
+
     transaction.commit().await?;
-    Ok(result.rows_affected() as u32)
+    Ok((blocks.rows_affected() + deadlines.rows_affected()) as u32)
 }
 
 /// Find a source by the first characters of its id, as the `feeds` command shows them.

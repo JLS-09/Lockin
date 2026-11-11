@@ -3,13 +3,13 @@
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
-use lockin_core::model::FeedEvent;
+use lockin_core::model::{FeedEvent, FeedSync};
 use lockin_core::{db, deadline, import, paths, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
 
   sync                     fetch all saved feeds again
-  sync <timeedit-url>      save a new feed and fetch it
+  sync <url>               save a new feed (TimeEdit or Ufora) and fetch it
   sync-file <file.ics>     same, from a saved file
   import-history <file>    add past blocks once, from a TimeEdit download
   feeds                    list the saved feeds and what each one contains
@@ -48,8 +48,8 @@ async fn main() -> Result<()> {
             // Save the full path, so `sync` finds the file again from any folder.
             let path = std::fs::canonicalize(file)?;
             let url = format!("file://{}", path.display());
-            let source_id = db::add_timeedit_source(&pool, &url).await?;
-            let result = import::import_source(&pool, &source_id, &url).await?;
+            let text = std::fs::read_to_string(&path)?;
+            let result = import::add_feed_text(&pool, &url, &text).await?;
             print_result(&result);
         }
         (Some("import-history"), Some(file)) => {
@@ -65,6 +65,15 @@ async fn main() -> Result<()> {
             for source in db::sources(&pool).await? {
                 // Never print the full URL: it contains a personal key.
                 print!("{}  {}  ", &source.id[..8], source.kind);
+                if source.kind == "ufora" {
+                    let count = import::feeds(&pool)
+                        .await?
+                        .into_iter()
+                        .find(|feed| feed.id == source.id)
+                        .map_or(0, |feed| feed.deadlines);
+                    println!("{count} deadlines");
+                    continue;
+                }
                 match import::fetch_events(&source.url).await {
                     Ok(events) => print_feed_contents(&events),
                     Err(error) => println!("failed: {error:#}"),
@@ -153,13 +162,10 @@ async fn sync_all(pool: &db::Pool) -> Result<()> {
     }
     for feed in results {
         // Never print the full URL: it contains a personal key.
-        print!("feed {}: ", &feed.source_id[..8]);
-        match feed.error {
+        print!("feed {} ({}): ", &feed.source_id[..8], feed.kind);
+        match &feed.error {
             Some(error) => println!("failed: {error}"),
-            None => println!(
-                "{} new, {} updated ({} moved), {} cancelled",
-                feed.added, feed.updated, feed.moved, feed.cancelled
-            ),
+            None => print_result(&feed),
         }
     }
     Ok(())
@@ -180,9 +186,15 @@ fn print_feed_contents(events: &[FeedEvent]) {
     }
 }
 
-fn print_result(result: &db::SyncResult) {
+/// "3 new deadlines, 2 updated (1 moved), 0 cancelled"
+fn print_result(result: &FeedSync) {
+    let what = if result.kind == "ufora" {
+        "deadlines"
+    } else {
+        "classes"
+    };
     println!(
-        "{} new, {} updated ({} moved), {} cancelled",
+        "{} new {what}, {} updated ({} moved), {} cancelled",
         result.added, result.updated, result.moved, result.cancelled
     );
 }
