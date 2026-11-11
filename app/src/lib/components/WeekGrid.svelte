@@ -2,9 +2,11 @@
   // The week as a CSS Grid, following the week view mockup: hour labels on the
   // left, a column per day, class blocks placed by their start and end time.
   // Built from scratch, no calendar library: everything can be styled with tokens.
-  import type { Activity, ClassBlock, Course, FilterRule } from "$lib/api";
+  // Deadlines (not in the mockups) sit under the day headers as small chips,
+  // like all-day events in a calendar: most are due at 23:59, after the grid ends.
+  import type { Activity, ClassBlock, Course, Deadline, FilterRule } from "$lib/api";
   import { isIgnored } from "$lib/api";
-  import { formatDate, formatTime, t, tn } from "$lib/i18n/index.svelte";
+  import { formatDate, formatTime, isoDate, t, tn } from "$lib/i18n/index.svelte";
   import { ignoringRule, kindLabel } from "$lib/week/labels";
   import { SLOT_MINUTES, columnForDate, rowForTime, type WeekLayout } from "$lib/week/layout";
   import { blockProgress } from "$lib/week/status";
@@ -17,8 +19,10 @@
     rules,
     now,
     selectedId,
+    deadlines,
     onSelect,
     onShowAnyway,
+    onOpenDeadline,
   }: {
     layout: WeekLayout;
     activities: Activity[];
@@ -28,11 +32,47 @@
     now: Date;
     /** The block whose panel is open. */
     selectedId: string | null;
+    /** Deadlines; the ones due on a shown day get a chip under its header. */
+    deadlines: Deadline[];
     /** Click (or Enter / Space) on a block. */
     onSelect: (block: ClassBlock) => void;
     /** "Show anyway" on an ignored block. */
     onShowAnyway: (block: ClassBlock) => void;
+    /** Click on a deadline chip. */
+    onOpenDeadline: (deadline: Deadline) => void;
   } = $props();
+
+  // The deadlines of each shown day ("2026-11-16" → […]), sorted by due time.
+  const deadlinesByDay = $derived.by(() => {
+    const days = new Map(layout.days.map((d) => [isoDate(d.date), [] as Deadline[]]));
+    for (const deadline of [...deadlines].sort((a, b) => a.dueAt.localeCompare(b.dueAt))) {
+      days.get(isoDate(new Date(deadline.dueAt)))?.push(deadline);
+    }
+    return days;
+  });
+
+  // The header row grows with the busiest day, so every column lines up.
+  const chipRows = $derived(Math.max(0, ...[...deadlinesByDay.values()].map((list) => list.length)));
+
+  /** "late", "done", "cancelled" or "" for a chip's look. */
+  function deadlineState(deadline: Deadline): string {
+    if (deadline.status === "cancelled") return "cancelled";
+    if (deadline.done) return "done";
+    return new Date(deadline.dueAt) < now ? "late" : "";
+  }
+
+  /** "Lab report 2 · Databanken · due 23:59" for the tooltip. */
+  function deadlineTooltip(deadline: Deadline): string {
+    const course = deadline.courseId ? courses.get(deadline.courseId)?.name : undefined;
+    const due = t("week.deadlineDue", { time: formatTime(new Date(deadline.dueAt)) });
+    return [deadline.title, course, due].filter(Boolean).join(" · ");
+  }
+
+  /** The time shows on the chip only when it isn't the usual 23:59. */
+  function chipTime(deadline: Deadline): string | null {
+    const due = new Date(deadline.dueAt);
+    return due.getHours() === 23 && due.getMinutes() === 59 ? null : formatTime(due);
+  }
 
   const slotsPerHour = 60 / SLOT_MINUTES;
   const hours = $derived(
@@ -63,6 +103,7 @@
 
 <div
   class="grid"
+  style:--chip-rows={chipRows}
   style:grid-template-columns="var(--hour-column) repeat({layout.days.length}, minmax(0, 1fr))"
   style:grid-template-rows="var(--header-height) repeat({layout.slots}, calc(var(--hour-height) / {slotsPerHour}))"
 >
@@ -72,10 +113,31 @@
 
   {#each layout.days as day (day.column)}
     {@const isToday = day.column === todayColumn}
+    {@const dayDeadlines = deadlinesByDay.get(isoDate(day.date)) ?? []}
     <div class="day" class:is-today={isToday} style:grid-column={day.column} style:grid-row="1">
-      <span class="weekday">{formatDate(day.date, { weekday: "short" })}</span>
-      {day.date.getDate()}
-      {#if isToday}<span class="pill">{t("week.today")}</span>{/if}
+      <div class="day-top">
+        <span class="weekday">{formatDate(day.date, { weekday: "short" })}</span>
+        {day.date.getDate()}
+        {#if isToday}<span class="pill">{t("week.today")}</span>{/if}
+      </div>
+      {#each dayDeadlines as deadline (deadline.id)}
+        {@const course = deadline.courseId ? courses.get(deadline.courseId) : undefined}
+        {@const time = chipTime(deadline)}
+        {@const state = deadlineState(deadline)}
+        <button
+          class="deadline {state}"
+          style:--course={course?.color}
+          title={deadlineTooltip(deadline)}
+          onclick={() => onOpenDeadline(deadline)}
+        >
+          <svg class="icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4h11l-2 4 2 4H5" /></svg>
+          {#if course}<span class="dot" aria-hidden="true"></span>{/if}
+          {#if time}<span class="chip-time">{time}</span>{/if}
+          <span class="ellipsis chip-title">{deadline.title}</span>
+          {#if state === "done"}<span class="visually-hidden">{t("status.done")}</span>{/if}
+          {#if state === "late"}<span class="visually-hidden">{t("status.behind")}</span>{/if}
+        </button>
+      {/each}
     </div>
   {/each}
 
@@ -190,9 +252,10 @@
 
 <style>
   .grid {
-    /* Sizes from the mockup: 52 px per hour, a 40 px header row. */
+    /* Sizes from the mockup: 52 px per hour, a 40 px header row,
+       plus a row of chips per deadline on the busiest day. */
     --hour-column: 52px;
-    --header-height: 40px;
+    --header-height: calc(40px + var(--chip-rows) * 26px);
     --hour-height: 52px;
 
     display: grid;
@@ -215,11 +278,76 @@
 
   .day {
     display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 10px;
+    flex-direction: column;
+    min-width: 0;
+    padding: 0 var(--space-1) var(--space-1);
     font-size: var(--text-base);
     color: var(--text-muted);
+  }
+
+  .day-top {
+    height: 40px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 6px;
+  }
+
+  /* A deadline chip: flag, course dot, time (if not 23:59) and title. */
+  .deadline {
+    height: 22px;
+    margin-bottom: 4px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+    padding: 0 6px;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--tag);
+    color: var(--text);
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+    position: relative;
+    z-index: 1;
+    transition: background-color var(--duration-micro) var(--ease-out);
+  }
+
+  .deadline:hover {
+    background: var(--surface-active);
+  }
+
+  .deadline .dot {
+    background: var(--course);
+  }
+
+  .chip-time {
+    flex: none;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .chip-title {
+    flex: 1;
+  }
+
+  /* Late: red flag and text, as "behind" everywhere. */
+  .deadline.late {
+    color: var(--status-behind-text);
+  }
+
+  /* Done: faded and struck through; cancelled: struck through. */
+  .deadline.done,
+  .deadline.cancelled {
+    color: var(--text-done);
+  }
+
+  .deadline.done .chip-title,
+  .deadline.cancelled .chip-title {
+    text-decoration: line-through;
   }
 
   .weekday {

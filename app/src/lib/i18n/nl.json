@@ -197,5 +197,8 @@
   "feeds.none": "Nog geen feeds.",
   "feeds.uforaSoon": "Deadlines uit Ufora komen in een latere update; voeg ze tot dan toe met Deadline.",
   "feeds.manage": "Feeds beheren",
-  "coming.done": "gedaan"
+  "coming.done": "gedaan",
+  "urgent.seeAll": "Alles bekijken",
+  "urgent.nothing": "Niets dringends.",
+  "week.deadlineDue": "tegen {time}"
 }

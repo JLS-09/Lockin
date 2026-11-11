@@ -11,7 +11,8 @@ study sessions that block distracting apps and websites.
 
 > **Status:** phases 1 and 2 of 6 are done: the TimeEdit import and the class tracking app
 > (week view, activities, templates, semester overview) work. Phase 3 is under way: the
-> Urgent page with manual deadlines works; the Ufora feed is next. Study sessions and blocking
+> Urgent page, manual deadlines and the Urgent panel on the week page work; the Ufora
+> feed is next. Study sessions and blocking
 > come in phase 4. Built first for CachyOS with KDE Plasma, with Windows and macOS support
 > planned later.
 
@@ -24,7 +25,8 @@ study sessions that block distracting apps and websites.
   marked instead of silently changed or deleted, and earlier weeks can be imported from a
   downloaded file
 - **Week view:** the week as a grid with every class in its course color, a status per
-  class (done, partly done, behind, planned), and a banner when the schedule changed
+  class (done, partly done, behind, planned), a banner when the schedule changed,
+  deadlines under the day headers and an Urgent panel
 - **Activities** per class to check off, rename or delete (with undo), plus to-dos for the
   week that aren't tied to a class
 - **Templates per course:** "after every WPO: do the exercises" adds the activity to every
@@ -39,7 +41,7 @@ study sessions that block distracting apps and websites.
 
 **Planned**
 
-- **Deadlines from Ufora** and an Urgent panel on the week page (phase 3)
+- **Deadlines from Ufora** (phase 3)
 - **Study sessions** started by a background service, with app and website blocking,
   break credit, tray icon and notifications (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)

@@ -197,5 +197,8 @@
   "feeds.none": "No feeds yet.",
   "feeds.uforaSoon": "Ufora deadlines come in a later update; until then, add them with Deadline.",
   "feeds.manage": "Manage feeds",
-  "coming.done": "done"
+  "coming.done": "done",
+  "urgent.seeAll": "See all",
+  "urgent.nothing": "Nothing urgent.",
+  "week.deadlineDue": "due {time}"
 }

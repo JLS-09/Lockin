@@ -3,16 +3,21 @@
 // Changes follow "feedback first": the screen changes at once, saving happens
 // after. If saving fails, the change is rolled back and `error` says why.
 // Both the shown week and today's week are kept in step, because the Today
-// panel can show activities of another week than the grid.
+// panel can show activities of another week than the grid. The Urgent panel
+// and the deadlines in the grid are reloaded after every change, since checking
+// off an activity can take it off the Urgent list.
 
 import {
   api,
   type Activity,
   type ClassBlock,
   type Course,
+  type Deadline,
   type FilterRule,
+  type UrgentItem,
   type Week,
 } from "$lib/api";
+import type { DeadlineFields } from "$lib/urgent/data.svelte";
 import { isoDate } from "$lib/i18n/index.svelte";
 
 export class WeekData {
@@ -24,6 +29,10 @@ export class WeekData {
   todayWeek = $state<Week | null>(null);
   courses = $state<Course[]>([]);
   rules = $state<FilterRule[]>([]);
+  /** The Urgent list, for the Urgent panel. */
+  urgent = $state<UrgentItem[]>([]);
+  /** Every deadline; the grid shows the ones of the shown week. */
+  deadlines = $state<Deadline[]>([]);
   error = $state<string | null>(null);
   /** False when no feed is saved yet: the week page then asks for a TimeEdit link. */
   hasSchedule = $state(true);
@@ -63,6 +72,15 @@ export class WeekData {
     }
   }
 
+  /** The Urgent list and the deadlines. */
+  async loadUrgent() {
+    try {
+      [this.urgent, this.deadlines] = await Promise.all([api.urgent(), api.deadlines()]);
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
   /**
    * Sync the feeds when the last sync is over an hour old, then reload what
    * changed. Until the daemon does this hourly (phase 4), opening the app does.
@@ -81,7 +99,12 @@ export class WeekData {
       const results = await api.syncFeeds();
       const changed = results.some((r) => r.added + r.moved + r.cancelled > 0);
       if (changed) {
-        await Promise.all([this.loadCoursesAndRules(), this.loadWeek(), this.loadToday()]);
+        await Promise.all([
+          this.loadCoursesAndRules(),
+          this.loadWeek(),
+          this.loadToday(),
+          this.loadUrgent(),
+        ]);
       }
     } catch (e) {
       console.warn("Background sync failed:", e);
@@ -98,6 +121,7 @@ export class WeekData {
     this.#change(activity.id, { done });
     try {
       await api.setActivityDone(activity.id, done);
+      this.loadUrgent();
     } catch (e) {
       this.#change(activity.id, { done: !done });
       this.error = String(e);
@@ -120,6 +144,7 @@ export class WeekData {
     this.#edit((list) => list.filter((a) => a.id !== activity.id));
     try {
       await api.removeActivity(activity.id);
+      this.loadUrgent();
       return true;
     } catch (e) {
       this.#insert(activity);
@@ -133,6 +158,7 @@ export class WeekData {
     this.#insert(activity);
     try {
       await api.restoreActivity(activity.id);
+      this.loadUrgent();
     } catch (e) {
       this.#edit((list) => list.filter((a) => a.id !== activity.id));
       this.error = String(e);
@@ -172,7 +198,7 @@ export class WeekData {
   async addTemplate(courseId: string, kind: string | null, title: string): Promise<number> {
     try {
       const created = await api.addTemplate(courseId, kind, title);
-      await Promise.all([this.loadWeek(), this.loadToday()]);
+      await Promise.all([this.loadWeek(), this.loadToday(), this.loadUrgent()]);
       return created;
     } catch (e) {
       this.error = String(e);
@@ -202,7 +228,46 @@ export class WeekData {
     try {
       await api.setBlockIgnored(block.id, false);
       // Keeping a block can give it template activities: reload both weeks.
-      await Promise.all([this.loadWeek(), this.loadToday()]);
+      await Promise.all([this.loadWeek(), this.loadToday(), this.loadUrgent()]);
+    } catch (e) {
+      this.error = String(e);
+    }
+  }
+
+  // ---------- Deadlines (from the chips in the grid) ----------
+
+  /** Returns false when saving failed, so the dialog stays open. */
+  async updateDeadline(id: string, fields: DeadlineFields): Promise<boolean> {
+    try {
+      await api.updateDeadline(id, fields.courseId, fields.title, fields.due);
+      await this.loadUrgent();
+      return true;
+    } catch (e) {
+      this.error = String(e);
+      return false;
+    }
+  }
+
+  /** Delete a deadline. Returns true if it worked, so the page can offer "Undo". */
+  async removeDeadline(deadline: Deadline): Promise<boolean> {
+    const old = this.deadlines;
+    this.deadlines = old.filter((d) => d.id !== deadline.id);
+    try {
+      await api.removeDeadline(deadline.id);
+      this.loadUrgent();
+      return true;
+    } catch (e) {
+      this.deadlines = old;
+      this.error = String(e);
+      return false;
+    }
+  }
+
+  /** Undo `removeDeadline`. */
+  async restoreDeadline(deadline: Deadline) {
+    try {
+      await api.restoreDeadline(deadline.id);
+      await this.loadUrgent();
     } catch (e) {
       this.error = String(e);
     }

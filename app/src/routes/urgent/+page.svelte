@@ -17,6 +17,7 @@
   import UrgentRow from "$lib/components/UrgentRow.svelte";
   import { formatDay, t } from "$lib/i18n/index.svelte";
   import { itemKey, UrgentData, type DeadlineFields } from "$lib/urgent/data.svelte";
+  import { weekHref } from "$lib/urgent/when";
 
   type Tab = "all" | "activities" | "deadlines";
   const tabs: { id: Tab; label: "urgent.tabAll" | "urgent.tabActivities" | "urgent.tabDeadlines" }[] = [
@@ -55,10 +56,10 @@
     return () => clearInterval(timer);
   });
 
-  /** Activities open their week; deadlines added by hand open the dialog. */
+  /** Activities open their week with their class selected; deadlines added by hand open the dialog. */
   function open(item: UrgentItem) {
     if (item.kind === "activity") {
-      if (item.week) goto(`/?date=${item.week}`);
+      goto(weekHref(item));
       return;
     }
     const deadline = data.deadline(item.id);

@@ -58,6 +58,18 @@ export function whenText(item: UrgentItem, now: Date): string {
   return "";
 }
 
+/**
+ * Where an Urgent line leads in the week view: an activity opens its week with
+ * its class selected ("/?date=2026-11-09&block=…"), a deadline the week it's due.
+ */
+export function weekHref(item: UrgentItem): string {
+  if (item.kind === "activity") {
+    const block = item.blockId ? `&block=${item.blockId}` : "";
+    return `/?date=${item.week}${block}`;
+  }
+  return `/?date=${isoDate(new Date(item.dueAt ?? Date.now()))}`;
+}
+
 /** The status icon of an Urgent line: "approaching" uses the half-filled dot. */
 export function urgentIcon(status: UrgentStatus): Status {
   return status === "approaching" ? "partial" : status;

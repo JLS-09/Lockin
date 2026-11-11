@@ -1,20 +1,25 @@
 <script lang="ts">
   // The week page, following the week view mockup: header with week switching,
   // the schedule changes banner, the week grid, and beside it the panel of the
-  // class you clicked, today's activities and this week's other activities.
-  // The Urgent panel and the study session button follow in phases 3 and 4.
+  // class you clicked, today's activities, the Urgent panel and this week's
+  // other activities. Deadlines show as chips under the day headers; clicking
+  // one opens the same dialog as on the Urgent page. The study session button
+  // follows in phase 4.
   //
   // Keys: ← / → switch weeks, Home goes to this week, A adds an activity,
-  // Escape closes the class panel, Ctrl+Z brings back a deleted activity.
+  // Escape closes the class panel, Ctrl+Z brings back a deleted activity or deadline.
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
+  import { untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
-  import { isIgnored, type Activity, type ClassBlock } from "$lib/api";
+  import { isIgnored, type Activity, type ClassBlock, type Deadline } from "$lib/api";
   import BlockPanel from "$lib/components/BlockPanel.svelte";
   import ChangesBanner from "$lib/components/ChangesBanner.svelte";
+  import DeadlineDialog from "$lib/components/DeadlineDialog.svelte";
   import TodayPanel from "$lib/components/TodayPanel.svelte";
+  import UrgentPanel from "$lib/components/UrgentPanel.svelte";
   import WeekGrid from "$lib/components/WeekGrid.svelte";
   import WeekPanel from "$lib/components/WeekPanel.svelte";
   import {
@@ -31,16 +36,13 @@
   import { layoutWeek, shownRange } from "$lib/week/layout";
 
   const data = new WeekData();
-  // "/?date=2026-10-26" opens that week (the semester overview links here like that).
-  const startDate = page.url.searchParams.get("date");
-  if (startDate) data.date = parseIsoDate(startDate);
   let now = $state(new Date());
   // -1 = the new week slides in from the left, 1 = from the right.
   let direction = $state(0);
   let showIgnored = $state(loadShowIgnored());
   let selectedId = $state<string | null>(null);
-  // The last deleted activity, for Undo and Ctrl+Z.
-  let deleted = $state<Activity | null>(null);
+  // Brings back the last deleted activity or deadline: for Undo and Ctrl+Z.
+  let undoDelete = $state<(() => void) | null>(null);
   // A short message at the bottom with one action: "Deleted … · Undo",
   // "Added to 12 classes · Templates". It goes away by itself.
   let toast = $state<{ text: string; action: string; run: () => void } | null>(null);
@@ -48,6 +50,23 @@
 
   let blockPanel = $state<BlockPanel>();
   let weekPanel = $state<WeekPanel>();
+  let deadlineDialog = $state<DeadlineDialog>();
+
+  // "/?date=2026-10-26" opens that week (the semester overview links here like
+  // that); "&block=<id>" also opens that class's panel (the Urgent list does).
+  // An effect, not a one-off: a link in the Urgent panel stays on this page.
+  $effect(() => {
+    const date = page.url.searchParams.get("date");
+    const block = page.url.searchParams.get("block");
+    untrack(() => {
+      if (date) {
+        const target = parseIsoDate(date);
+        direction = Math.sign(target.getTime() - data.date.getTime());
+        data.date = target;
+      }
+      selectedId = block;
+    });
+  });
 
   const week = $derived(data.week);
   const ignoredCount = $derived(week?.blocks.filter(isIgnored).length ?? 0);
@@ -88,6 +107,7 @@
 
   data.loadCoursesAndRules();
   data.loadToday();
+  data.loadUrgent();
   data.syncIfStale();
 
   // Reload whenever the date changes. The old week stays on screen until the
@@ -130,22 +150,37 @@
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => {
       toast = null;
-      deleted = null;
+      undoDelete = null;
     }, 6000);
+  }
+
+  /** "Deleted … · Undo" for 6 seconds; Undo or Ctrl+Z runs `restore`. */
+  function offerUndo(title: string, restore: () => void) {
+    undoDelete = restore;
+    showToast(t("activity.deleted", { title }), t("activity.undo"), undo);
   }
 
   async function remove(activity: Activity) {
     if (!(await data.remove(activity))) return;
-    deleted = activity;
-    showToast(t("activity.deleted", { title: activity.title }), t("activity.undo"), undo);
+    offerUndo(activity.title, () => data.restore(activity));
+  }
+
+  async function removeDeadline(deadline: Deadline) {
+    if (!(await data.removeDeadline(deadline))) return;
+    offerUndo(deadline.title, () => data.restoreDeadline(deadline));
   }
 
   function undo() {
-    if (!deleted) return;
-    data.restore(deleted);
-    deleted = null;
+    if (!undoDelete) return;
+    undoDelete();
+    undoDelete = null;
     toast = null;
     clearTimeout(toastTimer);
+  }
+
+  /** A deadline chip: deadlines added by hand open the dialog (feed ones follow with Ufora). */
+  function openDeadline(deadline: Deadline) {
+    if (!deadline.sourceId) deadlineDialog?.openEdit(deadline);
   }
 
   // From the class panel: one activity, or with "Every WPO" on, a template
@@ -157,13 +192,14 @@
     }
     const courseId = block.courseId;
     const created = await data.addTemplate(courseId, block.kind, title);
-    deleted = null;
+    undoDelete = null;
     showToast(tn("template.added", created), t("template.manageShort"), () =>
       goto(`/settings?course=${courseId}`),
     );
   }
 
   function onKeydown(event: KeyboardEvent) {
+    if (deadlineDialog?.isOpen()) return; // the dialog has its own keys
     const typing = (event.target as HTMLElement).closest(
       "input, textarea, select, [contenteditable]",
     );
@@ -171,7 +207,7 @@
       selectedId = null;
       return;
     }
-    if ((event.ctrlKey || event.metaKey) && event.key === "z" && deleted && !typing) {
+    if ((event.ctrlKey || event.metaKey) && event.key === "z" && undoDelete && !typing) {
       event.preventDefault();
       undo();
       return;
@@ -283,8 +319,10 @@
               rules={data.rules}
               {now}
               {selectedId}
+              deadlines={data.deadlines}
               onSelect={select}
               onShowAnyway={(block) => data.showAnyway(block)}
+              onOpenDeadline={openDeadline}
             />
           </div>
         {/key}
@@ -322,6 +360,7 @@
         {/key}
       {/if}
       <TodayPanel day={now} activities={todayActivities} courses={data.courseById} onToggle={(a) => data.toggle(a)} />
+      <UrgentPanel items={data.urgent} courses={data.courseById} {now} />
       {#if week}
         <WeekPanel
           bind:this={weekPanel}
@@ -337,10 +376,17 @@
   </div>
 </div>
 
+<DeadlineDialog
+  bind:this={deadlineDialog}
+  courses={data.courses}
+  onSave={(id, fields) => (id ? data.updateDeadline(id, fields) : Promise.resolve(false))}
+  onDelete={removeDeadline}
+/>
+
 {#if toast}
   <div class="toast" role="status" in:panelIn>
     <span class="toast-text" title={toast.text}>{toast.text}</span>
-    <button class="btn btn-small" title={deleted ? `${toast.action} (Ctrl+Z)` : toast.action} onclick={toast.run}>
+    <button class="btn btn-small" title={undoDelete ? `${toast.action} (Ctrl+Z)` : toast.action} onclick={toast.run}>
       {toast.action}
     </button>
   </div>
