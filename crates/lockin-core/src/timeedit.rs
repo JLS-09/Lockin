@@ -9,11 +9,20 @@ use icalendar::{
 
 use crate::model::FeedEvent;
 
+/// A feed download that takes longer than this fails.
+pub const DOWNLOAD_TIMEOUT_SECONDS: u64 = 60;
+
 /// Download the feed text from a TimeEdit subscription URL.
 /// Errors never contain the URL: it holds a personal key, and errors end up
 /// on screen (Settings, the CLI).
 pub async fn download(url: &str) -> Result<String> {
-    let response = reqwest::get(url)
+    // Give up after a minute, so a feed that hangs never blocks the daemon's next sync.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(DOWNLOAD_TIMEOUT_SECONDS))
+        .build()?;
+    let response = client
+        .get(url)
+        .send()
         .await
         .map_err(|e| anyhow!(e.without_url()))
         .context("could not reach the feed")?;

@@ -80,3 +80,24 @@ async fn errors_never_show_the_link() {
     let text = format!("{error:#}");
     assert!(!text.contains("personal-key"), "{text}");
 }
+
+#[tokio::test]
+async fn a_sync_is_due_after_an_hour() {
+    let pool = db::open_in_memory().await.unwrap();
+    let now = chrono::Utc::now();
+    // No feeds: nothing to sync.
+    assert!(!import::sync_due(&pool, now).await.unwrap());
+
+    // A feed that was never fetched is due at once.
+    let source = db::add_timeedit_source(&pool, &sample_url()).await.unwrap();
+    assert!(import::sync_due(&pool, now).await.unwrap());
+
+    // Just fetched: due again only once it's over an hour old.
+    import::import_source(&pool, &source, &sample_url())
+        .await
+        .unwrap();
+    let now = chrono::Utc::now();
+    assert!(!import::sync_due(&pool, now).await.unwrap());
+    let later = now + chrono::Duration::minutes(import::SYNC_EVERY_MINUTES + 1);
+    assert!(import::sync_due(&pool, later).await.unwrap());
+}

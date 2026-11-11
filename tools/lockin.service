@@ -1,0 +1,19 @@
+# Lockin daemon: starts and ends study sessions on time and syncs the feeds.
+# A systemd *user* service: it runs as you, while you're logged in.
+# Installed to ~/.config/systemd/user/ by tools/install-daemon.sh.
+
+[Unit]
+Description=Lockin daemon (study sessions and schedule sync)
+Documentation=https://github.com/JLS-09/Lockin
+
+[Service]
+Type=exec
+# %h is your home folder; the install script puts the binary there.
+ExecStart=%h/.local/bin/lockin-daemon run
+# Comes back by itself after a crash or a kill, so stopping it is never the
+# easy way out of a study session (the emergency button is).
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

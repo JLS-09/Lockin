@@ -1,5 +1,7 @@
-//! For now the daemon is a command-line tool, to test each step.
-//! In phase 4 step 2 it gets a `run` command: the systemd user service.
+//! The daemon: `lockin-daemon run` is the background service (see service.rs);
+//! every other command is a small command-line tool on the same database.
+
+mod service;
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -7,6 +9,10 @@ use lockin_core::model::{FeedEvent, FeedSync, StudySession};
 use lockin_core::{db, deadline, import, paths, session, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
+
+  run                      the background service: starts and ends study sessions
+                           on time and syncs the feeds every hour (lockin.service
+                           runs this; tools/install-daemon.sh installs it)
 
   sync                     fetch all saved feeds again
   sync <url>               save a new feed (TimeEdit or Ufora) and fetch it
@@ -56,6 +62,7 @@ async fn main() -> Result<()> {
     let pool = db::open(&paths::database_file()?).await?;
 
     match (command, argument) {
+        (Some("run"), _) => service::run(pool).await?,
         (Some("sync"), None) => sync_all(&pool).await?,
         (Some("sync"), Some(url)) => {
             let result = import::add_feed(&pool, url).await?;

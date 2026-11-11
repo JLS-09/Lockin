@@ -27,8 +27,8 @@ pub const BREAK_MINUTES: i64 = 5;
 pub const EMERGENCY_WAIT_SECONDS: i64 = 120;
 /// Penalty points for the emergency button (recorded from step 6 on).
 pub const EMERGENCY_PENALTY_POINTS: i64 = 50;
-/// The daemon starts a session if it sees it within this long after its start.
-/// Later than that, the daemon wasn't running at the start: the session is missed.
+/// A session the daemon starts more than this long after its planned start is
+/// logged as a late start ("late"): the daemon wasn't running at its start.
 pub const START_GRACE_SECONDS: i64 = 60;
 /// The longest session you can plan.
 pub const MAX_SESSION_HOURS: i64 = 12;
@@ -450,14 +450,20 @@ async fn log(
     Ok(())
 }
 
-async fn set_status(pool: &SqlitePool, session_id: &str, status: &str) -> Result<()> {
-    sqlx::query("UPDATE study_session SET status = ?, updated_at = ? WHERE id = ?")
-        .bind(status)
-        .bind(now_text())
-        .bind(session_id)
-        .execute(pool)
-        .await?;
-    Ok(())
+/// Move a session from status `from` to `to`. Returns false when it wasn't in
+/// `from` (any more): then someone else, like a second daemon, got there first.
+async fn change_status(pool: &SqlitePool, session_id: &str, from: &str, to: &str) -> Result<bool> {
+    let changed = sqlx::query(
+        "UPDATE study_session SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+    )
+    .bind(to)
+    .bind(now_text())
+    .bind(session_id)
+    .bind(from)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(changed == 1)
 }
 
 /// Break credit earned by studying this many seconds: 5 minutes for every
@@ -595,12 +601,11 @@ pub async fn start(
     now: DateTime<Utc>,
     detail: Option<&str>,
 ) -> Result<()> {
-    let session = get(pool, session_id).await?;
-    if session.status != "planned" {
+    // The status changes first, and only from "planned": a session never starts twice.
+    if !change_status(pool, session_id, "planned", "running").await? {
         bail!("this study session isn't waiting to start");
     }
-    log(pool, session_id, "start", now, detail).await?;
-    set_status(pool, session_id, "running").await
+    log(pool, session_id, "start", now, detail).await
 }
 
 /// Start a break in the running session. It ends by itself after
@@ -634,31 +639,28 @@ pub async fn resume(
 
 /// End a running session at its planned end (`at`): status "done".
 pub async fn finish(pool: &SqlitePool, session_id: &str, at: DateTime<Utc>) -> Result<()> {
-    let session = get(pool, session_id).await?;
-    if session.status != "running" {
+    if !change_status(pool, session_id, "running", "done").await? {
         bail!("this study session isn't running");
     }
-    log(pool, session_id, "end", at, None).await?;
-    set_status(pool, session_id, "done").await
+    log(pool, session_id, "end", at, None).await
 }
 
 /// End a running session early with the emergency button: status "stopped".
 /// The two-minute wait and the penalty points come with step 6.
 pub async fn emergency_stop(pool: &SqlitePool, session_id: &str, now: DateTime<Utc>) -> Result<()> {
-    let session = get(pool, session_id).await?;
-    if session.status != "running" {
+    if !change_status(pool, session_id, "running", "stopped").await? {
         bail!("this study session isn't running");
     }
-    log(pool, session_id, "emergency", now, None).await?;
-    set_status(pool, session_id, "stopped").await
+    log(pool, session_id, "emergency", now, None).await
 }
 
 /// What the daemon does every few seconds:
 /// 1. A running session past its end is finished (at its planned end).
 /// 2. A break whose time ran out gets its "resume", so blocking comes back on.
-/// 3. A planned session whose start has come is started, if that's within
-///    `START_GRACE_SECONDS`. Later than that the daemon wasn't running at its
-///    start, so it's marked "missed": no points and no penalty.
+/// 3. A planned session whose start has come is started. If the daemon wasn't
+///    running at its start (the PC was off), it starts late, logged as "late":
+///    no penalty, and study time (so points) only counts from now. One whose
+///    end passed without it ever starting is "missed": no points, no penalty.
 pub async fn tick(pool: &SqlitePool, now: DateTime<Utc>) -> Result<TickResult> {
     let mut result = TickResult::default();
 
@@ -696,13 +698,17 @@ pub async fn tick(pool: &SqlitePool, now: DateTime<Utc>) -> Result<TickResult> {
     for session in due {
         let starts = parse_time(&session.start_at)?;
         let ends = parse_time(&session.end_at)?;
-        let on_time = now - starts <= Duration::seconds(START_GRACE_SECONDS) && now < ends;
-        if on_time {
-            start(pool, &session.id, now, Some("daemon")).await?;
-            result.started.push(session.id);
+        if now >= ends {
+            if change_status(pool, &session.id, "planned", "missed").await? {
+                result.missed.push(session.id);
+            }
         } else {
-            set_status(pool, &session.id, "missed").await?;
-            result.missed.push(session.id);
+            let on_time = now - starts <= Duration::seconds(START_GRACE_SECONDS);
+            let detail = if on_time { "daemon" } else { "late" };
+            // Skip quietly if another process started it a moment ago.
+            if start(pool, &session.id, now, Some(detail)).await.is_ok() {
+                result.started.push(session.id);
+            }
         }
     }
     Ok(result)

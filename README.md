@@ -39,6 +39,9 @@ study sessions that block distracting apps and websites.
 - **Filter rules** to ignore blocks you don't attend (e.g. "zelfstandig werk"), with a
   manual exception per block
 - **Dutch and English**, switchable without a restart; keyboard shortcuts throughout
+- **Background daemon** (systemd user service) that starts and ends planned study
+  sessions on time, also when the app is closed, and syncs the feeds every hour. Study
+  sessions are planned from the command line for now (once or every week)
 
 **Planned**
 
@@ -76,7 +79,7 @@ TimeEdit / Ufora feeds ──► lockin-daemon ──► SQLite ◄── Tauri 
 ```
 crates/
   lockin-core/       data model, database, migrations, TimeEdit import, activities
-  lockin-daemon/     background service (for now a small CLI)
+  lockin-daemon/     background service (`run`) and a command-line tool
   lockin-helper/     root helper for browser block policies (planned)
 app/
   src/
@@ -88,7 +91,7 @@ app/
     lib/styles/      design tokens (tokens.css) and shared styles
   src-tauri/         Tauri (Rust) side of the app: thin commands over lockin-core
 assets/logo/         logo and icon sources (SVG, PNG)
-tools/               scripts: logo exports, desktop entry for development
+tools/               scripts: daemon install (lockin.service), logo exports, desktop entry
 ```
 
 Data is stored in `~/.local/share/lockin/lockin.db`, config in `~/.config/lockin/`.
@@ -114,6 +117,20 @@ pnpm tauri dev
 
 On first start the week is empty: open **Settings → Schedule** and paste your TimeEdit
 link, and your Ufora calendar link for deadlines.
+
+### The daemon
+
+The daemon starts and ends study sessions on time and syncs the feeds every hour, also
+when the app is closed. Install it as a systemd user service (Linux):
+
+```bash
+tools/install-daemon.sh            # build, install to ~/.local/bin and start lockin.service
+journalctl --user -u lockin -f     # what it's doing
+tools/install-daemon.sh --remove   # stop and remove it again (your data stays)
+```
+
+Run the script again after pulling changes. Without installing, `cargo run -p
+lockin-daemon -- run` runs it in the terminal until Ctrl+C; only one daemon runs at a time.
 
 ## Importing the schedule
 
@@ -164,11 +181,17 @@ cargo run -p lockin-daemon -- import-history <file>.ics   # earlier weeks from a
 cargo run -p lockin-daemon -- imports                     # the imported files; remove one with remove-import <id>
 cargo run -p lockin-daemon -- add-deadline 2026-11-16 "Lab report 2" E702010A  # due 23:59
 cargo run -p lockin-daemon -- urgent                      # open activities and deadlines, most urgent first
+cargo run -p lockin-daemon -- plan-session "2026-11-18 13:00" 15:30 "Exercises"  # a study session
+cargo run -p lockin-daemon -- plan-weekly "2026-11-18 13:00" 15:30 "Exercises"   # every week, to the end of the semester
+cargo run -p lockin-daemon -- sessions                    # last week's and the coming study sessions
+cargo run -p lockin-daemon -- session-status              # the running session: study time, break credit
 ```
 
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
 `remove-feed`, `keep-block` / `ignore-block` / `reset-block` for a manual exception per block,
-and `deadlines` / `done-deadline` / `remove-deadline`.
+`deadlines` / `done-deadline` / `remove-deadline`, and for study sessions `remove-session`,
+`remove-following`, `break`, `resume`, `emergency-stop` and `tick` (what the running daemon
+does every few seconds).
 
 ## Development
 
@@ -197,7 +220,7 @@ checks on every push.
 1. **Foundation:** workspace, database, TimeEdit import, filter rules *(done)*
 2. **Tracking classes:** week view, activities, templates, semester overview, NL/EN *(done)*
 3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(done)*
-4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications
+4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications *(in progress)*
 5. **Cloud sync** with Supabase
 6. **Motivation and insight:** points, streaks, statistics and the shop
 

@@ -451,19 +451,54 @@ async fn the_daemon_starts_and_ends_sessions_on_time() {
 }
 
 #[tokio::test]
-async fn a_start_the_daemon_didnt_see_is_missed() {
+async fn a_late_daemon_starts_the_session_late() {
     let pool = empty_database().await;
     let item = wednesday_session(&pool).await;
-    // The PC was off at 13:00; the daemon comes up at 13:10.
-    let result = session::tick(&pool, at(4, 13, 10)).await.unwrap();
+    // The PC was off at 13:00; the daemon comes up at 13:40.
+    let result = session::tick(&pool, at(4, 13, 40)).await.unwrap();
+    assert_eq!(result.started, vec![item.id.clone()]);
+    let events = session::events(&pool, &item.id).await.unwrap();
+    assert_eq!(events[0].detail.as_deref(), Some("late"));
+
+    // Study time (and so credit and points) only counts from 13:40.
+    let running = session::get(&pool, &item.id).await.unwrap();
+    let state = session::state_now(&pool, &running, at(4, 14, 10))
+        .await
+        .unwrap();
+    assert_eq!(state.worked_seconds, 30 * 60);
+    assert_eq!(state.credit_earned_seconds, 5 * 60);
+}
+
+#[tokio::test]
+async fn a_session_that_never_started_is_missed() {
+    let pool = empty_database().await;
+    let item = wednesday_session(&pool).await;
+    // The PC was off for the whole session; the daemon comes up at 16:00.
+    let result = session::tick(&pool, at(4, 16, 0)).await.unwrap();
     assert_eq!(result.missed, vec![item.id.clone()]);
     assert!(result.started.is_empty());
-    assert_eq!(
-        session::get(&pool, &item.id).await.unwrap().status,
-        "missed"
-    );
+    let missed = session::get(&pool, &item.id).await.unwrap();
+    assert_eq!(missed.status, "missed");
+    assert!(session::events(&pool, &item.id).await.unwrap().is_empty());
+    let state = session::state_now(&pool, &missed, at(4, 16, 0))
+        .await
+        .unwrap();
+    assert_eq!(state.worked_seconds, 0);
     // Missed sessions don't come back as the next one.
-    assert!(session::next(&pool, at(4, 13, 10)).await.unwrap().is_none());
+    assert!(session::next(&pool, at(4, 16, 0)).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn a_session_starts_only_once() {
+    let pool = empty_database().await;
+    let item = wednesday_session(&pool).await;
+    session::start(&pool, &item.id, at(4, 13, 0), Some("daemon"))
+        .await
+        .unwrap();
+    // A second process trying the same start gets an error and no second log line.
+    let again = session::start(&pool, &item.id, at(4, 13, 0), Some("daemon")).await;
+    assert!(again.is_err());
+    assert_eq!(session::events(&pool, &item.id).await.unwrap().len(), 1);
 }
 
 #[tokio::test]

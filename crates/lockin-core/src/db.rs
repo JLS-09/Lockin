@@ -5,7 +5,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::SqliteConnection;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
 /// The database connection pool. Re-exported so the app and daemon
 /// don't need their own sqlx dependency.
@@ -23,10 +23,15 @@ pub async fn open(file: &Path) -> Result<SqlitePool> {
         std::fs::create_dir_all(folder)?;
     }
 
+    // The app and the daemon use this file at the same time. WAL lets one write
+    // while the other reads, and a writer that finds it busy waits up to five
+    // seconds instead of failing at once.
     let options = SqliteConnectOptions::new()
         .filename(file)
         .create_if_missing(true)
-        .foreign_keys(true);
+        .foreign_keys(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5));
 
     let pool = SqlitePoolOptions::new().connect_with(options).await?;
     sqlx::migrate!("./migrations").run(&pool).await?;

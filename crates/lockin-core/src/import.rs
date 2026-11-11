@@ -7,7 +7,7 @@
 //! (`ufora::is_ufora_feed`).
 
 use anyhow::{Result, bail};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::db::{self, Pool, SyncResult};
 use crate::model::{FeedEvent, FeedInfo, FeedSync};
@@ -119,6 +119,24 @@ pub async fn sync_all(pool: &Pool) -> Result<Vec<FeedSync>> {
         });
     }
     Ok(results)
+}
+
+/// Feeds are fetched again once their last sync is older than this.
+pub const SYNC_EVERY_MINUTES: i64 = 60;
+
+/// True when a saved feed was never fetched, or not in the last
+/// `SYNC_EVERY_MINUTES` before `now`. The daemon then calls `sync_all`.
+pub async fn sync_due(pool: &Pool, now: DateTime<Utc>) -> Result<bool> {
+    let limit = now - chrono::Duration::minutes(SYNC_EVERY_MINUTES);
+    let limit = limit.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let stale: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM calendar_source
+         WHERE deleted = 0 AND (last_fetched_at IS NULL OR last_fetched_at < ?)",
+    )
+    .bind(limit)
+    .fetch_one(pool)
+    .await?;
+    Ok(stale > 0)
 }
 
 /// The saved feeds as the app shows them, without their URLs.
