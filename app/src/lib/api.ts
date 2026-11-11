@@ -118,6 +118,52 @@ export interface SyncResult {
   cancelled: number;
 }
 
+export type DeadlineStatus = "normal" | "moved" | "cancelled";
+
+/** Something due at a set time: added by hand, or from the Ufora feed. */
+export interface Deadline {
+  id: string;
+  /** The feed it came from; null if it was added by hand. */
+  sourceId: string | null;
+  courseId: string | null;
+  title: string;
+  description: string | null;
+  /** When it's due, RFC 3339 in UTC. */
+  dueAt: string;
+  done: boolean;
+  doneAt: string | null;
+  /** "moved" and "cancelled" only happen to feed deadlines. */
+  status: DeadlineStatus;
+  /** Due time before its first move. */
+  movedFrom: string | null;
+  changeSeen: boolean;
+}
+
+/** Status of an Urgent line: the icon and color it gets. */
+export type UrgentStatus = "behind" | "approaching" | "planned";
+
+/** One line of the Urgent list: an open activity or a deadline. */
+export interface UrgentItem {
+  kind: "activity" | "deadline";
+  /** The id of the activity or the deadline. */
+  id: string;
+  title: string;
+  courseId: string | null;
+  /** Activities: the class it belongs to, if any. */
+  blockId: string | null;
+  /** Activities: Monday of its week, to open the week view there. */
+  week: string | null;
+  /** Activities: since when it's open (end of its class, or Monday of its week). */
+  openSince: string | null;
+  /** Deadlines: when it's due. */
+  dueAt: string | null;
+  /** Deadlines: null if added by hand, else the feed it came from. */
+  sourceId: string | null;
+  status: UrgentStatus;
+  /** Higher = more urgent; the list comes sorted on it. */
+  score: number;
+}
+
 export interface Week {
   monday: string;
   blocks: ClassBlock[];
@@ -132,6 +178,8 @@ export const api = {
   progress: () => invoke<WeekProgress[]>("progress"),
   classWeeks: () => invoke<WeekClasses[]>("class_weeks"),
   rules: () => invoke<FilterRule[]>("rules"),
+  urgent: () => invoke<UrgentItem[]>("urgent"),
+  deadlines: () => invoke<Deadline[]>("deadlines"),
 
   addBlockActivity: (blockId: string, title: string) =>
     invoke<string>("add_block_activity", { blockId, title }),
@@ -143,6 +191,16 @@ export const api = {
     invoke<void>("rename_activity", { activityId, title }),
   removeActivity: (activityId: string) => invoke<void>("remove_activity", { activityId }),
   restoreActivity: (activityId: string) => invoke<void>("restore_activity", { activityId }),
+
+  /** `due` is RFC 3339, e.g. `date.toISOString()`. Returns the new id. */
+  addDeadline: (courseId: string | null, title: string, due: string) =>
+    invoke<string>("add_deadline", { courseId, title, due }),
+  updateDeadline: (deadlineId: string, courseId: string | null, title: string, due: string) =>
+    invoke<void>("update_deadline", { deadlineId, courseId, title, due }),
+  setDeadlineDone: (deadlineId: string, done: boolean) =>
+    invoke<void>("set_deadline_done", { deadlineId, done }),
+  removeDeadline: (deadlineId: string) => invoke<void>("remove_deadline", { deadlineId }),
+  restoreDeadline: (deadlineId: string) => invoke<void>("restore_deadline", { deadlineId }),
 
   addTemplate: (courseId: string, kind: string | null, title: string) =>
     invoke<number>("add_template", { courseId, kind, title }),

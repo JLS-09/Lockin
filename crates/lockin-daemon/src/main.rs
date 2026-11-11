@@ -2,9 +2,9 @@
 //! In phase 4 it becomes the systemd user service.
 
 use anyhow::{Result, bail};
-use chrono::{Datelike, Duration, Local, TimeZone, Utc};
+use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use lockin_core::model::FeedEvent;
-use lockin_core::{db, import, paths, timeedit};
+use lockin_core::{db, deadline, import, paths, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
 
@@ -21,7 +21,14 @@ const USAGE: &str = "usage: lockin-daemon <command>
   remove-rule <id>         remove a rule (the first characters of its id are enough)
   ignore-block <id>        always ignore this block, whatever the rules say
   keep-block <id>          never ignore this block, whatever the rules say
-  reset-block <id>         let the rules decide again for this block";
+  reset-block <id>         let the rules decide again for this block
+  add-deadline <when> <title> [course code]
+                           add a deadline; <when> is 2026-11-16 (due 23:59)
+                           or \"2026-11-16 14:00\"
+  deadlines                list all deadlines
+  done-deadline <id>       check a deadline off
+  remove-deadline <id>     remove a deadline
+  urgent                   the Urgent list: open activities and deadlines";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -107,6 +114,31 @@ async fn main() -> Result<()> {
             let block_id = db::find_block_id(&pool, id).await?;
             db::set_ignored_override(&pool, &block_id, None).await?;
         }
+        (Some("add-deadline"), Some(when)) => {
+            let (Some(title), code) = (args.get(3), args.get(4)) else {
+                bail!(USAGE);
+            };
+            let due = parse_when(when)?;
+            let course_id = match code {
+                Some(code) => Some(course_id_for_code(&pool, code).await?),
+                None => None,
+            };
+            deadline::add(&pool, course_id.as_deref(), title, due).await?;
+            println!(
+                "Deadline added, due {}.",
+                due.with_timezone(&Local).format("%a %d %b %Y %H:%M")
+            );
+        }
+        (Some("deadlines"), _) => show_deadlines(&pool).await?,
+        (Some("done-deadline"), Some(id)) => {
+            let deadline_id = deadline::find_id(&pool, id).await?;
+            deadline::set_done(&pool, &deadline_id, true).await?;
+        }
+        (Some("remove-deadline"), Some(id)) => {
+            let deadline_id = deadline::find_id(&pool, id).await?;
+            deadline::remove(&pool, &deadline_id).await?;
+        }
+        (Some("urgent"), _) => show_urgent(&pool).await?,
         _ => bail!(USAGE),
     }
 
@@ -199,6 +231,100 @@ async fn show_week(pool: &db::Pool) -> Result<()> {
             end_local.format("%H:%M"),
             block.title,
             marks
+        );
+    }
+    Ok(())
+}
+
+/// "2026-11-16" (due 23:59) or "2026-11-16 14:00", in local time.
+fn parse_when(text: &str) -> Result<chrono::DateTime<Utc>> {
+    let (date_text, time_text) = match text.split_once([' ', 'T']) {
+        Some((date, time)) => (date, Some(time)),
+        None => (text, None),
+    };
+    let Ok(date) = NaiveDate::parse_from_str(date_text, "%Y-%m-%d") else {
+        bail!("not a date: {date_text} (write it as 2026-11-16)");
+    };
+    let time = match time_text {
+        Some(time_text) => match NaiveTime::parse_from_str(time_text, "%H:%M") {
+            Ok(time) => Some(time),
+            Err(_) => bail!("not a time: {time_text} (write it as 14:00)"),
+        },
+        None => None,
+    };
+    deadline::due_time(date, time)
+}
+
+/// The id of the course with this code, e.g. E702010A.
+async fn course_id_for_code(pool: &db::Pool, code: &str) -> Result<String> {
+    let courses = db::courses(pool).await?;
+    match courses
+        .into_iter()
+        .find(|c| c.code.as_deref() == Some(code))
+    {
+        Some(course) => Ok(course.id),
+        None => bail!("no course with code {code}; `courses` lists them"),
+    }
+}
+
+/// The name of a course by id, or an empty string.
+fn course_name(courses: &[lockin_core::model::Course], id: Option<&str>) -> String {
+    courses
+        .iter()
+        .find(|c| Some(c.id.as_str()) == id)
+        .map(|c| c.name.clone())
+        .unwrap_or_default()
+}
+
+async fn show_deadlines(pool: &db::Pool) -> Result<()> {
+    let courses = db::courses(pool).await?;
+    let deadlines = deadline::all(pool).await?;
+    if deadlines.is_empty() {
+        println!(
+            "No deadlines yet. Add one with: lockin-daemon add-deadline 2026-11-16 \"Lab report\""
+        );
+    }
+    for item in deadlines {
+        let due = chrono::DateTime::parse_from_rfc3339(&item.due_at)?.with_timezone(&Local);
+        let mark = if item.done { "  [done]" } else { "" };
+        println!(
+            "{}  {}  {}  {}{}",
+            &item.id[..8],
+            due.format("%a %d %b %H:%M"),
+            item.title,
+            course_name(&courses, item.course_id.as_deref()),
+            mark
+        );
+    }
+    Ok(())
+}
+
+async fn show_urgent(pool: &db::Pool) -> Result<()> {
+    let courses = db::courses(pool).await?;
+    let items = urgent::list(pool, Utc::now()).await?;
+    if items.is_empty() {
+        println!("Nothing urgent.");
+    }
+    for item in items {
+        // "open 3 days" for an activity, "due Fri 13 Nov 23:59" for a deadline.
+        let when = match (&item.open_since, &item.due_at) {
+            (Some(since), _) => {
+                let since = chrono::DateTime::parse_from_rfc3339(since)?.with_timezone(&Utc);
+                format!("open {} days", (Utc::now() - since).num_days())
+            }
+            (None, Some(due)) => {
+                let due = chrono::DateTime::parse_from_rfc3339(due)?.with_timezone(&Local);
+                format!("due {}", due.format("%a %d %b %H:%M"))
+            }
+            (None, None) => String::new(),
+        };
+        println!(
+            "{:>6.1}  {:<11}  {}  {}  ({})",
+            item.score,
+            item.status,
+            item.title,
+            course_name(&courses, item.course_id.as_deref()),
+            when
         );
     }
     Ok(())

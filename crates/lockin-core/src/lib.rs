@@ -1,14 +1,16 @@
 //! Shared logic for the Lockin app and daemon:
-//! data model, database access, schedule import and (later) sync.
+//! data model, database access, schedule import, deadlines and (later) sync.
 
 pub mod activity;
 pub mod db;
+pub mod deadline;
 pub mod filter;
 pub mod import;
 pub mod model;
 pub mod paths;
 pub mod timeedit;
 pub mod title;
+pub mod urgent;
 
 /// The current time as RFC 3339 text in UTC, the format we store in SQLite.
 pub fn now_text() -> String {

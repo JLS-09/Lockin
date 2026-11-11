@@ -138,10 +138,13 @@ cargo run -p lockin-daemon -- week                        # this week's classes,
 cargo run -p lockin-daemon -- courses                     # the courses found in the schedule
 cargo run -p lockin-daemon -- feeds                       # what each saved feed contains
 cargo run -p lockin-daemon -- import-history <file>.ics   # earlier weeks from a download
+cargo run -p lockin-daemon -- add-deadline 2026-11-16 "Lab report 2" E702010A  # due 23:59
+cargo run -p lockin-daemon -- urgent                      # open activities and deadlines, most urgent first
 ```
 
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
-`remove-feed` and `keep-block` / `ignore-block` / `reset-block` for a manual exception per block.
+`remove-feed`, `keep-block` / `ignore-block` / `reset-block` for a manual exception per block,
+and `deadlines` / `done-deadline` / `remove-deadline`.
 
 ## Development
 
@@ -169,7 +172,7 @@ checks on every push.
 
 1. **Foundation:** workspace, database, TimeEdit import, filter rules *(done)*
 2. **Tracking classes:** week view, activities, templates, semester overview, NL/EN *(done)*
-3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(next)*
+3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(in progress)*
 4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications
 5. **Cloud sync** with Supabase
 6. **Motivation and insight:** points, streaks, statistics and the shop

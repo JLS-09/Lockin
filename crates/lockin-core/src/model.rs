@@ -159,3 +159,52 @@ pub struct WeekClasses {
     pub course_id: String,
     pub classes: i64,
 }
+
+/// Something due at a set time: added by hand, or from the Ufora feed.
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Deadline {
+    pub id: String,
+    /// The feed it came from; None if it was added by hand.
+    pub source_id: Option<String>,
+    pub course_id: Option<String>,
+    pub title: String,
+    pub description: Option<String>,
+    /// When it's due, RFC 3339 in UTC.
+    pub due_at: String,
+    pub done: bool,
+    pub done_at: Option<String>,
+    /// "normal", "moved" or "cancelled" (the last two only for feed deadlines).
+    pub status: String,
+    /// Due time before its first move, for "Moved · was Fri 23:59".
+    pub moved_from: Option<String>,
+    /// True once you've dismissed the change.
+    pub change_seen: bool,
+}
+
+/// One line of the Urgent list: an open activity or a deadline.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UrgentItem {
+    /// "activity" or "deadline".
+    pub kind: String,
+    /// The id of the activity or the deadline.
+    pub id: String,
+    pub title: String,
+    pub course_id: Option<String>,
+    /// Activities: the class block it belongs to, if any.
+    pub block_id: Option<String>,
+    /// Activities: Monday of its week, to open the week view there.
+    pub week: Option<String>,
+    /// Activities: since when it's open (the end of its class, or the
+    /// Monday of its week). RFC 3339 in UTC.
+    pub open_since: Option<String>,
+    /// Deadlines: when it's due. RFC 3339 in UTC.
+    pub due_at: Option<String>,
+    /// Deadlines: None if added by hand, else the feed it came from.
+    pub source_id: Option<String>,
+    /// "behind", "approaching" or "planned": the status icon and color.
+    pub status: String,
+    /// Higher = more urgent; the list is sorted on it. See `urgent::score`.
+    pub score: f64,
+}

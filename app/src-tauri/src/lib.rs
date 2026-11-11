@@ -8,13 +8,13 @@
 //! Tauri turns snake_case argument names into camelCase on the JavaScript side:
 //! `block_id` here is `blockId` in `invoke`.
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use lockin_core::db::SyncResult;
 use lockin_core::model::{
-    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, FeedInfo, FeedSync, FilterRule,
-    WeekClasses, WeekProgress,
+    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, Deadline, FeedInfo, FeedSync,
+    FilterRule, UrgentItem, WeekClasses, WeekProgress,
 };
-use lockin_core::{activity, db, import, paths};
+use lockin_core::{activity, db, deadline, import, paths, urgent};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -29,6 +29,14 @@ fn message(error: impl std::fmt::Display) -> String {
 /// Dates come from the frontend as "2026-11-11".
 fn parse_date(text: &str) -> CommandResult<NaiveDate> {
     NaiveDate::parse_from_str(text, "%Y-%m-%d").map_err(|_| format!("not a date: {text}"))
+}
+
+/// Times come from the frontend as RFC 3339, e.g. "2026-11-16T22:59:00.000Z"
+/// (what `Date.toISOString()` gives).
+fn parse_time(text: &str) -> CommandResult<DateTime<Utc>> {
+    DateTime::parse_from_rfc3339(text)
+        .map(|time| time.with_timezone(&Utc))
+        .map_err(|_| format!("not a time: {text}"))
 }
 
 /// Everything the week view needs in one call.
@@ -83,6 +91,18 @@ async fn class_weeks(pool: State<'_, db::Pool>) -> CommandResult<Vec<WeekClasses
 #[tauri::command]
 async fn progress(pool: State<'_, db::Pool>) -> CommandResult<Vec<WeekProgress>> {
     activity::progress(&pool).await.map_err(message)
+}
+
+/// The Urgent list right now: open activities and deadlines, most urgent first.
+#[tauri::command]
+async fn urgent(pool: State<'_, db::Pool>) -> CommandResult<Vec<UrgentItem>> {
+    urgent::list(&pool, Utc::now()).await.map_err(message)
+}
+
+/// Every deadline, done and cancelled ones too, sorted by due time.
+#[tauri::command]
+async fn deadlines(pool: State<'_, db::Pool>) -> CommandResult<Vec<Deadline>> {
+    deadline::all(&pool).await.map_err(message)
 }
 
 // ---------- Activities ----------
@@ -144,6 +164,60 @@ async fn remove_activity(pool: State<'_, db::Pool>, activity_id: String) -> Comm
 #[tauri::command]
 async fn restore_activity(pool: State<'_, db::Pool>, activity_id: String) -> CommandResult<()> {
     activity::restore(&pool, &activity_id)
+        .await
+        .map_err(message)
+}
+
+// ---------- Deadlines ----------
+
+/// A deadline added by hand; the course is optional. Returns its id.
+#[tauri::command]
+async fn add_deadline(
+    pool: State<'_, db::Pool>,
+    course_id: Option<String>,
+    title: String,
+    due: String,
+) -> CommandResult<String> {
+    let due = parse_time(&due)?;
+    deadline::add(&pool, course_id.as_deref(), &title, due)
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn update_deadline(
+    pool: State<'_, db::Pool>,
+    deadline_id: String,
+    course_id: Option<String>,
+    title: String,
+    due: String,
+) -> CommandResult<()> {
+    let due = parse_time(&due)?;
+    deadline::update(&pool, &deadline_id, course_id.as_deref(), &title, due)
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn set_deadline_done(
+    pool: State<'_, db::Pool>,
+    deadline_id: String,
+    done: bool,
+) -> CommandResult<()> {
+    deadline::set_done(&pool, &deadline_id, done)
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn remove_deadline(pool: State<'_, db::Pool>, deadline_id: String) -> CommandResult<()> {
+    deadline::remove(&pool, &deadline_id).await.map_err(message)
+}
+
+/// Undo a removal.
+#[tauri::command]
+async fn restore_deadline(pool: State<'_, db::Pool>, deadline_id: String) -> CommandResult<()> {
+    deadline::restore(&pool, &deadline_id)
         .await
         .map_err(message)
 }
@@ -291,12 +365,19 @@ pub fn run() {
             progress,
             class_weeks,
             rules,
+            urgent,
+            deadlines,
             add_block_activity,
             add_week_activity,
             set_activity_done,
             rename_activity,
             remove_activity,
             restore_activity,
+            add_deadline,
+            update_deadline,
+            set_deadline_done,
+            remove_deadline,
+            restore_deadline,
             add_template,
             remove_template,
             set_block_ignored,
