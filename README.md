@@ -10,7 +10,8 @@ it imports the schedule from TimeEdit, tracks what still needs doing per class, 
 study sessions that block distracting apps and websites.
 
 > **Status:** phases 1 and 2 of 6 are done: the TimeEdit import and the class tracking app
-> (week view, activities, templates, semester overview) work. Study sessions and blocking
+> (week view, activities, templates, semester overview) work. Phase 3 is under way: the
+> Urgent page with manual deadlines works; the Ufora feed is next. Study sessions and blocking
 > come in phase 4. Built first for CachyOS with KDE Plasma, with Windows and macOS support
 > planned later.
 
@@ -29,13 +30,16 @@ study sessions that block distracting apps and websites.
 - **Templates per course:** "after every WPO: do the exercises" adds the activity to every
   matching class, past ones included, so you can catch up when starting mid-semester
 - **Semester overview:** weeks × courses with a status per cell and the share done per course
+- **Urgent & deadlines:** one list of open activities and deadlines, most urgent first
+  (how long something has been open, how close a deadline is), with deadlines you add
+  yourself (D), "Coming 2 weeks" and the feeds' last sync
 - **Filter rules** to ignore blocks you don't attend (e.g. "zelfstandig werk"), with a
   manual exception per block
 - **Dutch and English**, switchable without a restart; keyboard shortcuts throughout
 
 **Planned**
 
-- **Deadlines** from Ufora and an "urgent" list (phase 3)
+- **Deadlines from Ufora** and an Urgent panel on the week page (phase 3)
 - **Study sessions** started by a background service, with app and website blocking,
   break credit, tray icon and notifications (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)

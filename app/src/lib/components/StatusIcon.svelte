@@ -4,7 +4,16 @@
   import { t } from "$lib/i18n/index.svelte";
   import type { Status } from "$lib/week/status";
 
-  let { status, size = 16 }: { status: Status; size?: number } = $props();
+  let {
+    status,
+    size = 16,
+    label,
+  }: {
+    status: Status;
+    size?: number;
+    /** Read out instead of the status name, e.g. "Deadline approaching". */
+    label?: string;
+  } = $props();
 
   const labels = {
     done: "status.done",
@@ -20,7 +29,7 @@
   height={size}
   viewBox="0 0 16 16"
   role="img"
-  aria-label={t(labels[status])}
+  aria-label={label ?? t(labels[status])}
 >
   {#if status === "done"}
     <circle cx="8" cy="8" r="7" fill="currentColor" />

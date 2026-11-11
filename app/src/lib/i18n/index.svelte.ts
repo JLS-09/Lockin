@@ -111,6 +111,12 @@ export function formatDate(date: Date, options: Intl.DateTimeFormatOptions): str
   return new Intl.DateTimeFormat(i18n.intlTag, options).format(date);
 }
 
+/** "Wed 11 Nov" / "wo 11 nov.": without the comma Intl puts after the weekday in English. */
+export function formatDay(date: Date): string {
+  const weekday = formatDate(date, { weekday: "short" });
+  return `${weekday} ${formatDate(date, { day: "numeric", month: "short" })}`;
+}
+
 /** "08:30" */
 export function formatTime(date: Date): string {
   return formatDate(date, { hour: "2-digit", minute: "2-digit" });

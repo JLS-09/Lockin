@@ -22,6 +22,7 @@
   --pill: #2b2f38; /* "Today" pill */
   --tag: #2f333b; /* "Moved · was …" tag */
   --cancelled-surface: #1c1f26;
+  --kbd: rgb(0 0 0 / 0.18); /* the key hint on a button, e.g. "D" */
   --overlay: rgb(21 23 28 / 0.6); /* --bg, see-through: behind a card on top of content */
 
   /* Text. All of them reach at least 4.5:1 on --bg (WCAG AA). */
@@ -43,6 +44,7 @@
   --status-done: #4caf7a;
   --status-done-text: #7fcf9f; /* "Done" as text, lighter for contrast */
   --status-behind: #e05d5d;
+  --status-behind-text: #ef8a8a; /* "Open 8 days" as text, lighter for contrast */
   --status-partial: #e0a050;
   --status-planned: #7a8699;
   --status-active: #d4d7dd;

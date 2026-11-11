@@ -28,6 +28,8 @@
   function onKeydown(event: KeyboardEvent) {
     const target = event.target as HTMLElement;
     if (target.closest("input, textarea, select, [contenteditable]")) return;
+    // Not while a dialog is open (the deadline dialog): it has its own keys.
+    if (document.querySelector("dialog[open]")) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
     const link = links.find((l) => l.key === event.key.toUpperCase());
     if (!link) return;
