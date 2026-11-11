@@ -9,21 +9,35 @@ A personal desktop app that keeps track of my class schedule and helps me actual
 it imports the schedule from TimeEdit, tracks what still needs doing per class, and runs
 study sessions that block distracting apps and websites.
 
-> **Status:** phase 1 of 6 is done: the TimeEdit import, course detection, filter rules and the
-> database work from the command line. The GUI (phase 2) is still a placeholder window. Built
-> first for CachyOS with KDE Plasma, with Windows and macOS support planned later.
+> **Status:** phases 1 and 2 of 6 are done: the TimeEdit import and the class tracking app
+> (week view, activities, templates, semester overview) work. Study sessions and blocking
+> come in phase 4. Built first for CachyOS with KDE Plasma, with Windows and macOS support
+> planned later.
 
 ## Features
 
-Planned, roughly in this order:
+**Working now**
 
-- **Schedule import** from TimeEdit and deadlines from Ufora, via their iCal feeds
-- **Week and semester overview** with activities to check off per class
-- **Filter rules** to ignore blocks you don't attend (e.g. "zelfstandig werk")
-- **Study sessions** started by a background service, with app and website blocking
-- **Break credit**, points, streaks and a cosmetic shop (themes, pets)
-- **Statistics:** planned versus actual study time per course and per week
-- **Cloud sync** via Supabase, while staying fully usable offline
+- **Schedule import** from TimeEdit via its iCal feed, with moved and cancelled classes
+  marked instead of silently changed or deleted
+- **Week view:** the week as a grid with every class in its course color, a status per
+  class (done, partly done, behind, planned), and a banner when the schedule changed
+- **Activities** per class to check off, rename or delete (with undo), plus to-dos for the
+  week that aren't tied to a class
+- **Templates per course:** "after every WPO: do the exercises" adds the activity to every
+  matching class, past ones included, so you can catch up when starting mid-semester
+- **Semester overview:** weeks × courses with a status per cell and the share done per course
+- **Filter rules** to ignore blocks you don't attend (e.g. "zelfstandig werk"), with a
+  manual exception per block
+- **Dutch and English**, switchable without a restart; keyboard shortcuts throughout
+
+**Planned**
+
+- **Deadlines** from Ufora and an "urgent" list (phase 3)
+- **Study sessions** started by a background service, with app and website blocking,
+  break credit, tray icon and notifications (phase 4)
+- **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
+- **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
 ## How it works
 
@@ -53,14 +67,20 @@ TimeEdit / Ufora feeds ──► lockin-daemon ──► SQLite ◄── Tauri 
 
 ```
 crates/
-  lockin-core/     data model, database, migrations, TimeEdit import
-  lockin-daemon/   background service (for now a small CLI)
-  lockin-helper/   root helper for browser block policies (planned)
+  lockin-core/       data model, database, migrations, TimeEdit import, activities
+  lockin-daemon/     background service (for now a small CLI)
+  lockin-helper/     root helper for browser block policies (planned)
 app/
-  src/             Svelte frontend
-  src-tauri/       Tauri (Rust) side of the app
-assets/logo/       logo and icon sources (SVG, PNG)
-tools/             scripts, e.g. regenerating the logo exports
+  src/
+    routes/          pages: week (/), semester, settings, and placeholders for later phases
+    lib/api.ts       typed wrappers around the Tauri commands
+    lib/components/  week grid, panels, activity rows, …
+    lib/week/        layout and status logic for the week and semester views
+    lib/i18n/        translations (en.json, nl.json) and date formatting
+    lib/styles/      design tokens (tokens.css) and shared styles
+  src-tauri/         Tauri (Rust) side of the app: thin commands over lockin-core
+assets/logo/         logo and icon sources (SVG, PNG)
+tools/               scripts: logo exports, desktop entry for development
 ```
 
 Data is stored in `~/.local/share/lockin/lockin.db`, config in `~/.config/lockin/`.
@@ -84,9 +104,11 @@ pnpm install
 pnpm tauri dev
 ```
 
-## Trying the schedule import
+The app reads the same database as the daemon, so import your schedule first (below).
 
-Until the GUI is ready, the daemon works as a command-line tool:
+## Importing the schedule
+
+Feeds are added from the command line for now (adding them in the app comes later):
 
 ```bash
 cargo run -p lockin-daemon -- sync "<TimeEdit iCal URL>"  # save the feed and import it
@@ -117,20 +139,30 @@ Run the daemon without arguments to see all commands, including `rules`, `remove
 ## Development
 
 ```bash
-cargo test                              # tests use a saved sample .ics, no network
-cargo fmt && cargo clippy --all-targets # before committing
+cargo fmt && cargo clippy --all-targets && cargo test   # Rust: before committing
+cd app && pnpm check                                     # Svelte and TypeScript
 ```
 
-GitHub Actions runs the same checks (plus `pnpm check`) on every push.
+Tests use a saved sample `.ics`, so they never hit TimeEdit. GitHub Actions runs the same
+checks on every push.
 
-Database changes go in a new file in `crates/lockin-core/migrations/`; they run automatically
-when the database is opened.
+- **Database changes** go in a new file in `crates/lockin-core/migrations/`; they run
+  automatically when the database is opened. Never edit a migration that has been pushed.
+- **Text in the UI** always comes from `app/src/lib/i18n/en.json` and `nl.json`;
+  `pnpm check` fails when a key is missing from `nl.json`.
+- **Colors, sizes and durations** come from the CSS variables in
+  `app/src/lib/styles/tokens.css`, never raw values in components.
+- **Smoothness:** in a dev build, switching weeks logs frame times to the console
+  (right-click → Inspect).
+- **Task bar icon on KDE Wayland:** `tools/install-desktop-entry.sh` installs a desktop
+  entry and icon for the dev build (`--remove` takes them out again).
+
 
 ## Roadmap
 
 1. **Foundation:** workspace, database, TimeEdit import, filter rules *(done)*
-2. **Tracking classes:** week view, activities, semester overview, NL/EN translations *(next)*
-3. **Deadlines:** manual deadlines and the Ufora feed
+2. **Tracking classes:** week view, activities, templates, semester overview, NL/EN *(done)*
+3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(next)*
 4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications
 5. **Cloud sync** with Supabase
 6. **Motivation and insight:** points, streaks, statistics and the shop
