@@ -11,7 +11,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 /// don't need their own sqlx dependency.
 pub type Pool = SqlitePool;
 
-use crate::model::{CalendarSource, ClassBlock, Course, FeedEvent, FilterRule};
+use crate::model::{CalendarSource, ClassBlock, Course, CourseKind, FeedEvent, FilterRule};
 use crate::{activity, filter};
 use crate::{new_id, now_text, title};
 
@@ -270,6 +270,19 @@ pub async fn courses(pool: &SqlitePool) -> Result<Vec<Course>> {
             .fetch_all(pool)
             .await?;
     Ok(courses)
+}
+
+/// The kinds of class each course has ("hoorcollege", "werkcollege", …),
+/// to choose from when making a template.
+pub async fn course_kinds(pool: &SqlitePool) -> Result<Vec<CourseKind>> {
+    let kinds = sqlx::query_as(
+        "SELECT DISTINCT course_id, kind FROM class_block
+         WHERE deleted = 0 AND course_id IS NOT NULL AND kind IS NOT NULL
+         ORDER BY course_id, kind",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(kinds)
 }
 
 /// What one sync changed.

@@ -1,20 +1,29 @@
 <script lang="ts">
-  // "Add an activity…": type and press Enter. With `courses`, a course can be
-  // picked too (for activities that aren't tied to a class).
+  // "Add an activity…": type and press Enter.
+  // - With `courses`, a course can be picked too (activities not tied to a class).
+  // - With `repeatLabel`, a toggle like "Every WPO" turns the activity into a
+  //   template, so every class of that kind gets it.
+  // Both appear once you start typing, so the field keeps its room.
   import type { Course } from "$lib/api";
   import { t } from "$lib/i18n/index.svelte";
 
   let {
     courses,
+    repeatLabel,
     onAdd,
   }: {
     courses?: Course[];
-    onAdd: (title: string, courseId: string | null) => void;
+    /** E.g. "Every WPO"; leave out to hide the toggle. */
+    repeatLabel?: string;
+    onAdd: (title: string, courseId: string | null, repeat: boolean) => void;
   } = $props();
 
   let title = $state("");
   let courseId = $state("");
+  let repeat = $state(false);
   let input: HTMLInputElement;
+
+  const typing = $derived(title.trim() !== "");
 
   /** Put the cursor in the field: the A shortcut. */
   export function focus() {
@@ -25,8 +34,9 @@
     event.preventDefault();
     const text = title.trim();
     if (!text) return;
-    onAdd(text, courseId || null);
+    onAdd(text, courseId || null, repeat);
     title = "";
+    repeat = false;
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -48,14 +58,26 @@
     title="{t('activity.add')} (A)"
     onkeydown={onKeydown}
   />
-  <!-- The course picker appears once you start typing, so the field keeps its room. -->
-  {#if courses && title.trim()}
+  {#if courses && typing}
     <select bind:value={courseId} aria-label={t("activity.course")}>
       <option value="">{t("activity.noCourse")}</option>
       {#each courses as course (course.id)}
         <option value={course.id}>{course.name}</option>
       {/each}
     </select>
+  {/if}
+  {#if repeatLabel && typing}
+    <button
+      type="button"
+      class="repeat"
+      class:on={repeat}
+      aria-pressed={repeat}
+      title={t("template.repeatHint")}
+      onclick={() => (repeat = !repeat)}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l4 4-4 4M3 11V9a3 3 0 0 1 3-3h15M7 22l-4-4 4-4M21 13v2a3 3 0 0 1-3 3H3" /></svg>
+      {repeatLabel}
+    </button>
   {/if}
 </form>
 
@@ -127,5 +149,36 @@
   option {
     background: var(--surface-2);
     color: var(--text);
+  }
+
+  /* "↻ Every WPO": a small toggle, filled when on. */
+  .repeat {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 28px;
+    padding: 0 var(--space-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 99px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color var(--duration-micro) var(--ease-out),
+      color var(--duration-micro) var(--ease-out);
+  }
+
+  .repeat:hover {
+    color: var(--text);
+  }
+
+  .repeat.on {
+    background: var(--control);
+    border-color: var(--control);
+    color: var(--control-text);
   }
 </style>

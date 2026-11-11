@@ -68,6 +68,12 @@ export interface ActivityTemplate {
   title: string;
 }
 
+export interface CourseKind {
+  courseId: string;
+  /** "hoorcollege", "werkcollege", … */
+  kind: string;
+}
+
 export interface WeekProgress {
   week: string;
   courseId: string;
@@ -83,6 +89,7 @@ export interface Week {
 
 export const api = {
   courses: () => invoke<Course[]>("courses"),
+  courseKinds: () => invoke<CourseKind[]>("course_kinds"),
   week: (date: string) => invoke<Week>("week", { date }),
   templates: () => invoke<ActivityTemplate[]>("templates"),
   progress: () => invoke<WeekProgress[]>("progress"),

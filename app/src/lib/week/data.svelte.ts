@@ -131,6 +131,24 @@ export class WeekData {
     }
   }
 
+  // ---------- Templates ----------
+
+  /**
+   * "After every WPO of this course: Exercises". The template gives every
+   * matching class the activity at once, so both weeks are reloaded.
+   * Returns how many activities it made.
+   */
+  async addTemplate(courseId: string, kind: string | null, title: string): Promise<number> {
+    try {
+      const created = await api.addTemplate(courseId, kind, title);
+      await Promise.all([this.loadWeek(), this.loadToday()]);
+      return created;
+    } catch (e) {
+      this.error = String(e);
+      return 0;
+    }
+  }
+
   // ---------- Blocks ----------
 
   /** "Got it" on the schedule changes banner. */

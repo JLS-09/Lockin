@@ -288,3 +288,17 @@ async fn activities_keep_the_order_they_were_added_in() {
         .collect();
     assert_eq!(titles, ["Zebra", "Apple", "Mango"]);
 }
+
+#[tokio::test]
+async fn course_kinds_lists_each_kind_once() {
+    let (pool, _) = database_with_sample().await;
+    let signals = course_id(&pool, "E702010A").await;
+    let kinds: Vec<String> = db::course_kinds(&pool)
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|k| k.course_id == signals)
+        .map(|k| k.kind)
+        .collect();
+    assert_eq!(kinds, ["hoorcollege", "werkcollege"]);
+}

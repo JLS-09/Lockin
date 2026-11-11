@@ -109,3 +109,11 @@ pub struct WeekProgress {
     pub total: i64,
     pub done: i64,
 }
+
+/// One kind of class a course has, e.g. Signalen en systemen has "werkcollege".
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CourseKind {
+    pub course_id: String,
+    pub kind: String,
+}

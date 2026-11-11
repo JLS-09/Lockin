@@ -26,3 +26,9 @@ export function ignoringRule(block: ClassBlock, rules: FilterRule[]): FilterRule
     return value?.toLowerCase().includes(rule.pattern.toLowerCase()) ?? false;
   });
 }
+
+/** "werkcollege (WPO)", or just "practicum" when there's no usual short name. */
+export function kindName(kind: string): string {
+  const short = kindLabel(kind);
+  return short && short !== kind ? `${kind} (${short})` : kind;
+}

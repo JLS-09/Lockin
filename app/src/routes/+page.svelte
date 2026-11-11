@@ -6,6 +6,7 @@
   //
   // Keys: ← / → switch weeks, Home goes to this week, A adds an activity,
   // Escape closes the class panel, Ctrl+Z brings back a deleted activity.
+  import { goto } from "$app/navigation";
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
@@ -15,7 +16,15 @@
   import TodayPanel from "$lib/components/TodayPanel.svelte";
   import WeekGrid from "$lib/components/WeekGrid.svelte";
   import WeekPanel from "$lib/components/WeekPanel.svelte";
-  import { addDays, formatRange, isoDate, isoWeek, parseIsoDate, t } from "$lib/i18n/index.svelte";
+  import {
+    addDays,
+    formatRange,
+    isoDate,
+    isoWeek,
+    parseIsoDate,
+    t,
+    tn,
+  } from "$lib/i18n/index.svelte";
   import { measureFrames } from "$lib/perf";
   import { WeekData } from "$lib/week/data.svelte";
   import { layoutWeek, shownRange } from "$lib/week/layout";
@@ -26,9 +35,12 @@
   let direction = $state(0);
   let showIgnored = $state(loadShowIgnored());
   let selectedId = $state<string | null>(null);
-  // The last deleted activity, for the Undo toast.
+  // The last deleted activity, for Undo and Ctrl+Z.
   let deleted = $state<Activity | null>(null);
-  let undoTimer: ReturnType<typeof setTimeout> | undefined;
+  // A short message at the bottom with one action: "Deleted … · Undo",
+  // "Added to 12 classes · Templates". It goes away by itself.
+  let toast = $state<{ text: string; action: string; run: () => void } | null>(null);
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   let blockPanel = $state<BlockPanel>();
   let weekPanel = $state<WeekPanel>();
@@ -108,19 +120,42 @@
     selectedId = selectedId === block.id ? null : block.id;
   }
 
+  function showToast(text: string, action: string, run: () => void) {
+    toast = { text, action, run };
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => {
+      toast = null;
+      deleted = null;
+    }, 6000);
+  }
+
   async function remove(activity: Activity) {
     if (!(await data.remove(activity))) return;
-    // Offer "Undo" for a few seconds.
     deleted = activity;
-    clearTimeout(undoTimer);
-    undoTimer = setTimeout(() => (deleted = null), 6000);
+    showToast(t("activity.deleted", { title: activity.title }), t("activity.undo"), undo);
   }
 
   function undo() {
     if (!deleted) return;
     data.restore(deleted);
     deleted = null;
-    clearTimeout(undoTimer);
+    toast = null;
+    clearTimeout(toastTimer);
+  }
+
+  // From the class panel: one activity, or with "Every WPO" on, a template
+  // that gives every WPO of the course this activity.
+  async function addFromPanel(block: ClassBlock, title: string, repeat: boolean) {
+    if (!repeat || !block.courseId) {
+      await data.addToBlock(block, title);
+      return;
+    }
+    const courseId = block.courseId;
+    const created = await data.addTemplate(courseId, block.kind, title);
+    deleted = null;
+    showToast(tn("template.added", created), t("template.manageShort"), () =>
+      goto(`/settings?course=${courseId}`),
+    );
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -266,7 +301,7 @@
               onToggle={(a) => data.toggle(a)}
               onRename={(a, title) => data.rename(a, title)}
               onRemove={remove}
-              onAdd={(title) => data.addToBlock(selected, title)}
+              onAdd={(title, repeat) => addFromPanel(selected, title, repeat)}
               onClose={() => (selectedId = null)}
             />
           </div>
@@ -288,10 +323,12 @@
   </div>
 </div>
 
-{#if deleted}
+{#if toast}
   <div class="toast" role="status" in:panelIn>
-    <span class="toast-text" title={deleted.title}>{t("activity.deleted", { title: deleted.title })}</span>
-    <button class="btn btn-small" title="{t('activity.undo')} (Ctrl+Z)" onclick={undo}>{t("activity.undo")}</button>
+    <span class="toast-text" title={toast.text}>{toast.text}</span>
+    <button class="btn btn-small" title={deleted ? `${toast.action} (Ctrl+Z)` : toast.action} onclick={toast.run}>
+      {toast.action}
+    </button>
   </div>
 {/if}
 

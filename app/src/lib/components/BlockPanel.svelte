@@ -26,7 +26,8 @@
     onToggle: (activity: Activity) => void;
     onRename: (activity: Activity, title: string) => void;
     onRemove: (activity: Activity) => void;
-    onAdd: (title: string) => void;
+    /** `repeat`: make it a template for every class of this kind of the course. */
+    onAdd: (title: string, repeat: boolean) => void;
     onClose: () => void;
   } = $props();
 
@@ -40,6 +41,14 @@
   const start = $derived(new Date(block.startAt));
   const end = $derived(new Date(block.endAt));
   const doneCount = $derived(activities.filter((a) => a.done).length);
+  // "Every WPO", or "Every class" when TimeEdit gives no kind. Only for blocks of a course.
+  const repeatLabel = $derived(
+    !block.courseId
+      ? undefined
+      : block.kind
+        ? t("template.repeatKind", { kind: kindLabel(block.kind) ?? block.kind })
+        : t("template.repeatAll"),
+  );
   const name = $derived(course?.name ?? block.title);
   const when = $derived(
     [
@@ -95,8 +104,11 @@
     </div>
   {/if}
 
-  <AddActivity bind:this={adder} onAdd={(title) => onAdd(title)} />
+  <AddActivity bind:this={adder} {repeatLabel} onAdd={(title, _course, repeat) => onAdd(title, repeat)} />
   <p class="panel-hint">{t("block.hint")}</p>
+  {#if block.courseId}
+    <a class="templates-link" href="/settings?course={block.courseId}">{t("template.manage")}</a>
+  {/if}
 </section>
 
 <style>
@@ -166,6 +178,18 @@
     margin: 0 10px;
     padding-left: 0;
     padding-right: 0;
+  }
+
+  .templates-link {
+    display: inline-block;
+    margin: 0 10px var(--space-1);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    text-underline-offset: 2px;
+  }
+
+  .templates-link:hover {
+    color: var(--text);
   }
 
   h3 {

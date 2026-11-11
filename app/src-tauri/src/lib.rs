@@ -10,7 +10,7 @@
 
 use chrono::NaiveDate;
 use lockin_core::model::{
-    Activity, ActivityTemplate, ClassBlock, Course, FilterRule, WeekProgress,
+    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, FilterRule, WeekProgress,
 };
 use lockin_core::{activity, db, paths};
 use serde::Serialize;
@@ -58,6 +58,12 @@ async fn week(pool: State<'_, db::Pool>, date: String) -> CommandResult<Week> {
             .map_err(message)?,
         activities: activity::in_week(&pool, date).await.map_err(message)?,
     })
+}
+
+/// The kinds of class per course, to choose from when making a template.
+#[tauri::command]
+async fn course_kinds(pool: State<'_, db::Pool>) -> CommandResult<Vec<CourseKind>> {
+    db::course_kinds(&pool).await.map_err(message)
 }
 
 #[tauri::command]
@@ -209,6 +215,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             courses,
+            course_kinds,
             week,
             templates,
             progress,
