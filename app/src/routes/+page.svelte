@@ -1,8 +1,8 @@
 <script lang="ts">
   // The week page, following the week view mockup: header with week switching,
   // the schedule changes banner, the week grid, and beside it the panel of the
-  // class you clicked, today's activities, the Urgent panel and this week's
-  // other activities. Deadlines show as chips under the day headers; clicking
+  // class you clicked, today's activities, the Urgent and Deadlines panels and
+  // this week's other activities. Deadlines show as chips under the day headers; clicking
   // one opens the same dialog as on the Urgent page. The study session button
   // follows in phase 4.
   //
@@ -85,6 +85,13 @@
   const selected = $derived(week?.blocks.find((b) => b.id === selectedId) ?? null);
   const selectedActivities = $derived(
     selected ? (week?.activities.filter((a) => a.blockId === selected.id) ?? []) : [],
+  );
+
+  // The Deadlines panel: open deadlines (late ones first), soonest first.
+  const deadlineItems = $derived(
+    data.urgent
+      .filter((item) => item.kind === "deadline")
+      .sort((a, b) => (a.dueAt ?? "").localeCompare(b.dueAt ?? "")),
   );
 
   // Activities of the shown week that aren't tied to a class.
@@ -370,6 +377,15 @@
       {/if}
       <TodayPanel day={now} activities={todayActivities} courses={data.courseById} onToggle={(a) => data.toggle(a)} />
       <UrgentPanel items={data.urgent} courses={data.courseById} {now} />
+      <UrgentPanel
+        items={deadlineItems}
+        courses={data.courseById}
+        {now}
+        title={t("urgent.tabDeadlines")}
+        seeAllHref="/urgent?tab=deadlines"
+        emptyText={t("week.noDeadlines")}
+        headingId="deadlines-panel-heading"
+      />
       {#if week}
         <WeekPanel
           bind:this={weekPanel}

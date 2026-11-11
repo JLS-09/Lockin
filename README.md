@@ -24,7 +24,7 @@ study sessions that block distracting apps and websites.
   downloaded file
 - **Week view:** the week as a grid with every class in its course color, a status per
   class (done, partly done, behind, planned), a banner when the schedule changed,
-  deadlines under the day headers and an Urgent panel
+  deadlines under the day headers, and Urgent and Deadlines panels
 - **Activities** per class to check off, rename or delete (with undo), plus to-dos for the
   week that aren't tied to a class
 - **Templates per course:** "after every WPO: do the exercises" adds the activity to every

@@ -3,6 +3,8 @@
   // "Besturingssystemen · open 8 days" or "Databanken · due Fri 23:59 · Ufora",
   // and "See all". A line opens its week: an activity with its class selected,
   // a deadline the week it's due.
+  // The Deadlines panel is the same panel with only deadlines (not in the
+  // mockups): old activities can fill the Urgent panel and hide them.
   import type { Course, UrgentItem } from "$lib/api";
   import { t } from "$lib/i18n/index.svelte";
   import { urgentIcon, weekHref, whenText } from "$lib/urgent/when";
@@ -15,11 +17,23 @@
     items,
     courses,
     now,
+    title,
+    seeAllHref = "/urgent",
+    emptyText,
+    headingId = "urgent-panel-heading",
   }: {
-    /** The Urgent list, most urgent first. */
+    /** The lines in the order to show them; the first three are shown. */
     items: UrgentItem[];
     courses: Map<string, Course>;
     now: Date;
+    /** "Urgent" when left out (in the current language). */
+    title?: string;
+    /** Where "See all" leads. */
+    seeAllHref?: string;
+    /** Shown when there are no lines; "Nothing urgent." when left out. */
+    emptyText?: string;
+    /** Unique per panel on the page, for the heading's id. */
+    headingId?: string;
   } = $props();
 
   const statusLabels = {
@@ -40,14 +54,14 @@
   }
 </script>
 
-<section class="panel urgent" aria-labelledby="urgent-panel-heading">
+<section class="panel urgent" aria-labelledby={headingId}>
   <div class="panel-head">
-    <h2 class="panel-title" id="urgent-panel-heading">{t("urgent.listTitle")}</h2>
-    <a class="see-all" href="/urgent">{t("urgent.seeAll")}</a>
+    <h2 class="panel-title" id={headingId}>{title ?? t("urgent.listTitle")}</h2>
+    <a class="see-all" href={seeAllHref}>{t("urgent.seeAll")}</a>
   </div>
 
   {#if items.length === 0}
-    <p class="panel-empty">{t("urgent.nothing")}</p>
+    <p class="panel-empty">{emptyText ?? t("urgent.nothing")}</p>
   {:else}
     {#each items.slice(0, SHOWN) as item (`${item.kind}:${item.id}`)}
       {@const text = detail(item)}

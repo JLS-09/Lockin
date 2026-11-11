@@ -7,6 +7,7 @@
   // Keys: D adds a deadline, Ctrl+Z brings back a deleted one.
   // In the list: Space checks off, Enter opens, Delete removes a deadline.
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
@@ -29,7 +30,11 @@
   const data = new UrgentData();
   data.load();
 
-  let tab = $state<Tab>("all");
+  // "/urgent?tab=deadlines" (the week page's Deadlines panel) opens that tab.
+  const startTab = page.url.searchParams.get("tab");
+  let tab = $state<Tab>(
+    startTab === "activities" || startTab === "deadlines" ? startTab : "all",
+  );
   let now = $state(new Date());
   let dialog = $state<DeadlineDialog>();
   // The last deleted deadline, for Undo and Ctrl+Z.
