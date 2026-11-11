@@ -148,6 +148,14 @@ for variant, colour in (("on-dark", INK_ON_DARK), ("on-light", INK_ON_LIGHT)):
     )
     write(f"svg/lockin-logo-{variant}.svg", svg(view, body, "Lockin"))
 
+# The app's own copy of the full logo: currentColor, so CSS decides the colour.
+body = (
+    '<g fill="currentColor">\n'
+    f'<g transform="translate(0 {mark_top:g}) scale({s:g})">{MARK}</g>\n'
+    f'<path d="{d}"/>\n</g>'
+)
+write("app/lockin-logo.svg", svg(view, body, "Lockin"))
+
 # ------------------------------------------------ 3. padlock-O wordmark (alt)
 # From the canvas: 150 px text, "L", then the padlock as an inline SVG of
 # 0.524em x 0.72em sitting on the baseline (margin 0.1em left, 0.035em right), then "ckin".

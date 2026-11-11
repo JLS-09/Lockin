@@ -237,3 +237,12 @@ async fn standalone_activity_and_progress() {
     assert_eq!(progress[0].course_id, signals);
     assert_eq!((progress[0].done, progress[0].total), (1, 3));
 }
+
+#[test]
+fn week_range_is_seven_local_days() {
+    let (start, end) = activity::week_range(sample_week());
+    assert!(start < end);
+    // 7 days, give or take an hour for a summer/winter time change.
+    let hours = (end - start).num_hours();
+    assert!((167..=169).contains(&hours), "{hours} hours");
+}

@@ -1,0 +1,20 @@
+{
+  "app.name": "Lockin",
+  "nav.main": "Main",
+  "nav.week": "Week",
+  "nav.semester": "Semester",
+  "language.label": "Language",
+  "week.title": "Week {number}",
+  "week.previous": "Previous week",
+  "week.next": "Next week",
+  "week.today": "Today",
+  "week.loading": "Loading the week…",
+  "week.empty": "No classes this week.",
+  "week.loadFailed": "Could not load the week: {error}",
+  "block.moved": "Moved",
+  "block.cancelled": "Cancelled",
+  "block.ignored": "Ignored",
+  "block.activities.one": "{done} of {total} activity done",
+  "block.activities.other": "{done} of {total} activities done",
+  "semester.comingSoon": "The semester overview comes in step 6."
+}

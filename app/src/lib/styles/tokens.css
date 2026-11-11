@@ -1,0 +1,73 @@
+/*
+ * Design tokens: every color, size and duration the UI uses.
+ * Components only use these variables, never raw values, so a shop theme
+ * is just another set of values for the same names.
+ * The values come from the UI mockups.
+ */
+
+:root {
+  color-scheme: dark;
+
+  /* Surfaces, from back to front. */
+  --bg: #15171c; /* window background */
+  --surface-1: #1a1d23; /* sidebar, calendar panel */
+  --surface-2: #1f2229; /* cards, buttons */
+  --surface-hover: #23272f;
+  --surface-active: #2a2e36;
+  --border: #262a33;
+  --border-strong: #2f3440;
+
+  /* Text. All of them reach at least 4.5:1 on --bg (WCAG AA). */
+  --text: #e4e6eb;
+  --text-muted: #aab1bd;
+  --text-faint: #7a8699;
+
+  /* Controls: no accent hue, only greys, so themes bring the color. */
+  --control: #d4d7dd;
+  --control-hover: #ffffff;
+  --control-text: #15171c;
+
+  /* Status colors. Fixed: a theme may nudge them, never make them unreadable.
+     Every status also has its own icon, so color is never the only signal. */
+  --status-done: #4caf7a;
+  --status-behind: #e05d5d;
+  --status-partial: #e0a050;
+  --status-planned: #7a8699;
+  --status-active: #d4d7dd;
+
+  /* How much of a course color tints a class block's background. */
+  --course-tint: 22%;
+
+  /* Type: one typeface in three sizes. */
+  --font: "Inter Variable", system-ui, sans-serif;
+  --text-sm: 12px;
+  --text-md: 14px;
+  --text-lg: 22px;
+  --weight-normal: 400;
+  --weight-medium: 500;
+  --weight-bold: 600;
+
+  /* Spacing and corners. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --radius-sm: 4px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  /* Motion: smooth but fast. Only animate transform and opacity. */
+  --duration-micro: 120ms; /* hover, check off, button press */
+  --duration-panel: 200ms; /* switching weeks, dialogs, side panel */
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* "Reduce motion" in the system settings: only short fades. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-micro: 0ms;
+    --duration-panel: 100ms;
+  }
+}

@@ -1,0 +1,90 @@
+/* Page-wide defaults and a few shared classes. Uses only tokens.css. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--text-md);
+  line-height: 1.4;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+/* Keyboard focus is always visible; mouse clicks don't draw a ring. */
+:focus-visible {
+  outline: 2px solid var(--control);
+  outline-offset: 2px;
+}
+
+/* Buttons from the mockups. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-micro) var(--ease-out),
+    transform var(--duration-micro) var(--ease-out);
+}
+
+.btn:hover {
+  background: var(--surface-hover);
+}
+
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: var(--control);
+  border-color: var(--control);
+  color: var(--control-text);
+}
+
+.btn-primary:hover {
+  background: var(--control-hover);
+}
+
+.btn-icon {
+  width: 36px;
+  padding: 0;
+}
+
+/* Text only for screen readers. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

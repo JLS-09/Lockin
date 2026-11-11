@@ -1,0 +1,20 @@
+{
+  "app.name": "Lockin",
+  "nav.main": "Hoofdmenu",
+  "nav.week": "Week",
+  "nav.semester": "Semester",
+  "language.label": "Taal",
+  "week.title": "Week {number}",
+  "week.previous": "Vorige week",
+  "week.next": "Volgende week",
+  "week.today": "Vandaag",
+  "week.loading": "Week laden…",
+  "week.empty": "Geen lessen deze week.",
+  "week.loadFailed": "De week kon niet geladen worden: {error}",
+  "block.moved": "Verplaatst",
+  "block.cancelled": "Geannuleerd",
+  "block.ignored": "Genegeerd",
+  "block.activities.one": "{done} van {total} activiteit gedaan",
+  "block.activities.other": "{done} van {total} activiteiten gedaan",
+  "semester.comingSoon": "Het semesteroverzicht komt in stap 6."
+}

@@ -16,3 +16,4 @@ icalendar.workspace = true
 reqwest.workspace = true
 directories.workspace = true
 anyhow.workspace = true
+serde.workspace = true

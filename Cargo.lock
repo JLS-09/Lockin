@@ -2040,6 +2040,8 @@ dependencies = [
 name = "lockin-app"
 version = "0.1.0"
 dependencies = [
+ "chrono",
+ "glib",
  "lockin-core",
  "serde",
  "serde_json",
@@ -2057,6 +2059,7 @@ dependencies = [
  "directories",
  "icalendar",
  "reqwest 0.12.28",
+ "serde",
  "sqlx",
  "tokio",
  "uuid",

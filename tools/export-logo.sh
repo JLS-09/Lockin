@@ -15,6 +15,7 @@ python3 tools/gen_logo.py "$font" "$tmp"
 rm -rf "$out/svg" "$out/png"
 cp -r "$tmp/svg" "$out/svg"
 cp "$tmp/app/lockin-mark.svg" app/src/lib/assets/lockin-mark.svg
+cp "$tmp/app/lockin-logo.svg" app/src/lib/assets/lockin-logo.svg
 
 mkdir -p "$out/png/tray"
 for v in dark light; do

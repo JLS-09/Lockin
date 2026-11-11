@@ -1,6 +1,7 @@
 //! The data types used across Lockin.
 
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 
 /// One event read from an iCal feed, before it goes into the database.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,7 +15,8 @@ pub struct FeedEvent {
 }
 
 /// A class block as stored in the database.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ClassBlock {
     pub id: String,
     pub ical_uid: Option<String>,
@@ -45,7 +47,8 @@ pub struct FilterRule {
 }
 
 /// A course, e.g. "Signalen en systemen" with code E702010A.
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Course {
     pub id: String,
     pub code: Option<String>,
@@ -63,7 +66,8 @@ pub struct CalendarSource {
 }
 
 /// Something to check off, e.g. "Do the exercises".
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Activity {
     pub id: String,
     /// The class block it belongs to; None for an activity on its own.
@@ -79,7 +83,8 @@ pub struct Activity {
 }
 
 /// "After every werkcollege of this course: do the exercises."
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ActivityTemplate {
     pub id: String,
     pub course_id: String,
@@ -90,7 +95,8 @@ pub struct ActivityTemplate {
 
 /// How many activities of one course in one week are done.
 /// One cell of the semester overview.
-#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct WeekProgress {
     /// Monday of the week, e.g. "2026-11-09".
     pub week: String,

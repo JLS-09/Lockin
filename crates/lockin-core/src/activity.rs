@@ -1,7 +1,7 @@
 //! Activities to check off, and the templates that create them per course.
 
 use anyhow::{Result, bail};
-use chrono::{Datelike, Duration, NaiveDate};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
 use sqlx::SqliteConnection;
 use sqlx::sqlite::SqlitePool;
 
@@ -27,6 +27,23 @@ pub async fn next_course_color(conn: &mut SqliteConnection) -> Result<&'static s
 pub fn week_of(date: NaiveDate) -> String {
     let monday = date - Duration::days(date.weekday().num_days_from_monday() as i64);
     monday.format("%Y-%m-%d").to_string()
+}
+
+/// Start and end of the week `date` is in: Monday 00:00 up to the next Monday 00:00,
+/// in local time, as UTC. Use it with `db::blocks_between`.
+pub fn week_range(date: NaiveDate) -> (DateTime<Utc>, DateTime<Utc>) {
+    let monday = date - Duration::days(date.weekday().num_days_from_monday() as i64);
+    // Each end on its own, so a week with a summer/winter time change is still right.
+    (midnight(monday), midnight(monday + Duration::days(7)))
+}
+
+/// 00:00 local time on `day`, as UTC.
+fn midnight(day: NaiveDate) -> DateTime<Utc> {
+    Local
+        .from_local_datetime(&day.and_hms_opt(0, 0, 0).unwrap())
+        .earliest()
+        .unwrap()
+        .with_timezone(&Utc)
 }
 
 // ---------- Templates ----------

@@ -20,4 +20,10 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde.workspace = true
 serde_json.workspace = true
+chrono.workspace = true
 lockin-core.workspace = true
+
+# Linux only: to set the GTK program name, see `run()` in src/lib.rs.
+# Same version Tauri itself uses, so nothing extra gets compiled.
+[target.'cfg(target_os = "linux")'.dependencies]
+glib = "0.18"
