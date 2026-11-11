@@ -88,6 +88,21 @@ pub struct FeedInfo {
     pub deadlines: i64,
 }
 
+/// Earlier weeks imported from a downloaded TimeEdit file, as Settings lists them.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryImport {
+    pub id: String,
+    /// The file name; None for imports from before Lockin remembered them.
+    pub name: Option<String>,
+    pub imported_at: String,
+    /// Classes it still holds (not taken over by the live feed).
+    pub classes: i64,
+    /// Start of its first and last class, for "26 Sep – 27 Oct".
+    pub first_start: Option<String>,
+    pub last_start: Option<String>,
+}
+
 /// The result of syncing one feed, for the app: what changed, or why it failed.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -11,7 +11,7 @@
 use chrono::{DateTime, NaiveDate, Utc};
 use lockin_core::model::{
     Activity, ActivityTemplate, ClassBlock, Course, CourseKind, Deadline, FeedInfo, FeedSync,
-    FilterRule, UrgentItem, WeekClasses, WeekProgress,
+    FilterRule, HistoryImport, UrgentItem, WeekClasses, WeekProgress,
 };
 use lockin_core::{activity, db, deadline, import, paths, urgent};
 use serde::Serialize;
@@ -290,13 +290,32 @@ struct HistoryResult {
 }
 
 /// Add the past classes from a downloaded TimeEdit file. The frontend reads
-/// the file and sends its text, so no file access is needed on this side.
+/// the file and sends its text and name, so no file access is needed on this side.
 #[tauri::command]
-async fn import_history(pool: State<'_, db::Pool>, text: String) -> CommandResult<HistoryResult> {
-    let (added, total) = import::import_history_text(&pool, &text)
+async fn import_history(
+    pool: State<'_, db::Pool>,
+    text: String,
+    name: Option<String>,
+) -> CommandResult<HistoryResult> {
+    let (added, total) = import::import_history_text(&pool, &text, name.as_deref())
         .await
         .map_err(message)?;
     Ok(HistoryResult { added, total })
+}
+
+/// The file imports that still hold classes, newest first.
+#[tauri::command]
+async fn history_imports(pool: State<'_, db::Pool>) -> CommandResult<Vec<HistoryImport>> {
+    db::history_imports(&pool).await.map_err(message)
+}
+
+/// Remove a file import: its classes are hidden, except the ones the live feed has.
+/// Returns how many classes were hidden.
+#[tauri::command]
+async fn remove_history_import(pool: State<'_, db::Pool>, import_id: String) -> CommandResult<u32> {
+    db::remove_history_import(&pool, &import_id)
+        .await
+        .map_err(message)
 }
 
 /// "Ignore classes whose title contains …". Returns how many classes changed.
@@ -390,6 +409,8 @@ pub fn run() {
             sync_feeds,
             remove_feed,
             import_history,
+            history_imports,
+            remove_history_import,
             add_rule,
             remove_rule,
         ])

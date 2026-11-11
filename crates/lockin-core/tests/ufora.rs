@@ -214,5 +214,9 @@ async fn a_pasted_ufora_feed_is_recognised() {
     assert!(deadline::all(&pool).await.unwrap().is_empty());
 
     // A Ufora file isn't a TimeEdit download.
-    assert!(import::import_history_text(&pool, UFORA).await.is_err());
+    assert!(
+        import::import_history_text(&pool, UFORA, None)
+            .await
+            .is_err()
+    );
 }

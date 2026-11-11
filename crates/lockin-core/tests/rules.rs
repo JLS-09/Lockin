@@ -3,7 +3,7 @@
 use chrono::{TimeZone, Utc};
 use lockin_core::db::{self, Pool};
 use lockin_core::model::ClassBlock;
-use lockin_core::{import, timeedit};
+use lockin_core::{activity, import, timeedit};
 
 const SAMPLE: &str = include_str!("fixtures/timeedit_sample.ics");
 const KENNISCLIPS: &str = "E701033A. Wiskunde I, zelfstandig werk, Kennisclips";
@@ -154,11 +154,15 @@ async fn history_adds_only_unknown_past_blocks() {
     history.push(copy);
 
     // The 2099 blocks are skipped (in the future and already known), as is the copy.
-    let added = db::import_history(&pool, &history).await.unwrap();
+    let added = db::import_history(&pool, &history, Some("past.ics"))
+        .await
+        .unwrap();
     assert_eq!(added, 2);
 
     // Importing the same file again adds nothing.
-    let again = db::import_history(&pool, &history).await.unwrap();
+    let again = db::import_history(&pool, &history, Some("past.ics"))
+        .await
+        .unwrap();
     assert_eq!(again, 0);
 
     // The imported blocks don't belong to a feed, so `sync` won't touch them.
@@ -171,4 +175,77 @@ async fn history_adds_only_unknown_past_blocks() {
     .unwrap();
     assert_eq!(past.len(), 2);
     assert!(past[0].course_id.is_some());
+}
+
+#[tokio::test]
+async fn a_history_import_can_be_removed_and_brought_back() {
+    let pool = database_with_sample().await;
+    let mut history = timeedit::parse(SAMPLE).unwrap();
+    // Two past blocks of their own, plus one the live feed already has
+    // (it keeps its 2099 time, so it's skipped as known and in the future).
+    for (i, event) in history.iter_mut().take(2).enumerate() {
+        event.uid = format!("past-{i}@timeedit");
+        event.start = Utc
+            .with_ymd_and_hms(2020, 9, 21 + i as u32, 8, 0, 0)
+            .unwrap();
+        event.end = event.start + chrono::Duration::hours(2);
+    }
+    db::import_history(&pool, &history[..2], Some("past.ics"))
+        .await
+        .unwrap();
+    let year_2020 = (
+        Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+        Utc.with_ymd_and_hms(2021, 1, 1, 0, 0, 0).unwrap(),
+    );
+    let blocks = db::blocks_between(&pool, year_2020.0, year_2020.1)
+        .await
+        .unwrap();
+    let ids: Vec<String> = blocks.iter().map(|b| b.id.clone()).collect();
+
+    // The import is listed, with its file name and classes.
+    let imports = db::history_imports(&pool).await.unwrap();
+    assert_eq!(imports.len(), 1);
+    assert_eq!(imports[0].name.as_deref(), Some("past.ics"));
+    assert_eq!(imports[0].classes, 2);
+    assert_eq!(
+        imports[0].first_start.as_deref(),
+        Some("2020-09-21T08:00:00Z")
+    );
+
+    // An activity on one of its classes, checked off.
+    let activity_id = activity::add_to_block(&pool, &ids[0], "Review")
+        .await
+        .unwrap();
+    activity::set_done(&pool, &activity_id, true).await.unwrap();
+
+    // Removing hides its classes, and their activities with them.
+    let hidden = db::remove_history_import(&pool, &imports[0].id)
+        .await
+        .unwrap();
+    assert_eq!(hidden, 2);
+    assert!(db::history_imports(&pool).await.unwrap().is_empty());
+    assert!(
+        db::blocks_between(&pool, year_2020.0, year_2020.1)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    // The live feed's classes are untouched.
+    assert_eq!(all_blocks(&pool).await.len(), 4);
+
+    // Importing the file again brings the same classes back, with the activity.
+    let added = db::import_history(&pool, &history[..2], Some("past.ics"))
+        .await
+        .unwrap();
+    assert_eq!(added, 2);
+    let back: Vec<String> = db::blocks_between(&pool, year_2020.0, year_2020.1)
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|b| b.id)
+        .collect();
+    assert_eq!(back, ids);
+    let monday = chrono::NaiveDate::from_ymd_opt(2020, 9, 21).unwrap();
+    let activities = activity::in_week(&pool, monday).await.unwrap();
+    assert!(activities.iter().any(|a| a.id == activity_id && a.done));
 }

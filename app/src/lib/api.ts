@@ -103,6 +103,19 @@ export interface FeedInfo {
   deadlines: number;
 }
 
+/** Earlier weeks imported from a downloaded TimeEdit file. */
+export interface HistoryImport {
+  id: string;
+  /** The file name; null for imports from before Lockin remembered them. */
+  name: string | null;
+  importedAt: string;
+  /** Classes it still holds (not taken over by the live feed). */
+  classes: number;
+  /** Start of its first and last class. */
+  firstStart: string | null;
+  lastStart: string | null;
+}
+
 /** What syncing one feed changed, or why it failed. */
 export interface FeedSync {
   sourceId: string;
@@ -225,8 +238,13 @@ export const api = {
   syncFeeds: () => invoke<FeedSync[]>("sync_feeds"),
   /** Returns how many classes the removed feed held. */
   removeFeed: (sourceId: string) => invoke<number>("remove_feed", { sourceId }),
-  importHistory: (text: string) =>
-    invoke<{ added: number; total: number }>("import_history", { text }),
+  /** `name` is the file name, shown in Settings to remove the import again. */
+  importHistory: (text: string, name: string | null) =>
+    invoke<{ added: number; total: number }>("import_history", { text, name }),
+  historyImports: () => invoke<HistoryImport[]>("history_imports"),
+  /** Returns how many classes were hidden. */
+  removeHistoryImport: (importId: string) =>
+    invoke<number>("remove_history_import", { importId }),
   /** Returns how many classes changed. */
   addRule: (pattern: string) => invoke<number>("add_rule", { pattern }),
   removeRule: (ruleId: string) => invoke<number>("remove_rule", { ruleId }),

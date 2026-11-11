@@ -147,13 +147,18 @@ pub async fn feeds(pool: &Pool) -> Result<Vec<FeedInfo>> {
 }
 
 /// Add the past classes from a downloaded TimeEdit file (its text), once.
+/// `name` is the file name, shown in Settings to remove the import again.
 /// Returns (added, events in the file).
-pub async fn import_history_text(pool: &Pool, ics_text: &str) -> Result<(u32, u32)> {
+pub async fn import_history_text(
+    pool: &Pool,
+    ics_text: &str,
+    name: Option<&str>,
+) -> Result<(u32, u32)> {
     if ufora::is_ufora_feed(ics_text) {
         bail!("this is a Ufora file; paste the Ufora link under Schedule instead");
     }
     let events = timeedit::parse(ics_text)?;
-    let added = db::import_history(pool, &events).await?;
+    let added = db::import_history(pool, &events, name).await?;
     Ok((added, events.len() as u32))
 }
 

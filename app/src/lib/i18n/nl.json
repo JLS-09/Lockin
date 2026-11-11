@@ -211,5 +211,11 @@
   "deadline.openInUfora": "Openen in Ufora",
   "urgent.movedFrom": "verplaatst, was {day}",
   "feeds.uforaNote": "Deadlines uit Ufora worden aan een vak gekoppeld via de vakcode.",
-  "feeds.uforaAdd": "Voeg je Ufora-agendalink toe onder Instellingen → Lesrooster om de deadlines hier te krijgen."
+  "feeds.uforaAdd": "Voeg je Ufora-agendalink toe onder Instellingen → Lesrooster om de deadlines hier te krijgen.",
+  "schedule.earlierImport": "Eerdere import",
+  "schedule.removeImport": "Deze import verwijderen",
+  "schedule.confirmRemoveImport.one": "Deze les verwijderen, met haar activiteiten? Ze blijft als je TimeEdit-link ze ook heeft; het bestand opnieuw importeren brengt ze terug.",
+  "schedule.confirmRemoveImport.other": "Deze {count} lessen verwijderen, met hun activiteiten? Lessen die je TimeEdit-link ook heeft, blijven; het bestand opnieuw importeren brengt ze terug.",
+  "schedule.importRemoved.one": "Import verwijderd, met {count} les.",
+  "schedule.importRemoved.other": "Import verwijderd, met {count} lessen."
 }

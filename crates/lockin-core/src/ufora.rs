@@ -10,7 +10,9 @@
 //! - "Werkcollege 8: oplossingen - Beschikbaar": content released. Not a deadline.
 //!
 //! Only the first two kinds become deadlines, titled without the suffix. The
-//! suffixes follow the Ufora interface language; these are the Dutch ones.
+//! suffixes follow the Ufora interface language. In English they are "Due" and
+//! "Availability Ends" ("Available" for released content), and the English
+//! export sometimes uses an en dash: "Quiz 3 – Availability Ends".
 //!
 //! LOCATION holds the course: "E761080A - Machinaal leren", or a room followed
 //! by "(E761080A - Machinaal leren)". The code links the deadline to the course
@@ -23,12 +25,22 @@ use icalendar::{
     Calendar, CalendarComponent, CalendarDateTime, Component, DatePerhapsTime, EventLike,
 };
 
-/// Title endings that mark a deadline, in the Ufora interface language.
-pub const DEADLINE_SUFFIXES: &[&str] =
-    &[" - Verwacht", " - Beschikbaarheid eindigt", " - verloopt"];
+/// The labels after the title that mark a deadline, in Dutch and English.
+/// Checked against real exports of 11 Nov 2026: "Verwacht" is "Due",
+/// "Beschikbaarheid eindigt" is "Availability Ends", "verloopt" is "Due" too.
+pub const DEADLINE_LABELS: &[&str] = &[
+    "Verwacht",
+    "Beschikbaarheid eindigt",
+    "verloopt",
+    "Due",
+    "Availability Ends",
+];
+
+/// Between the title and the label: a hyphen, or an en dash in some English events.
+const SEPARATORS: &[&str] = &[" - ", " – "];
 
 /// The line at the end of every description, followed by a link to the event.
-const EVENT_LINK_LABEL: &str = "Gebeurtenis weergeven - ";
+const EVENT_LINK_LABELS: &[&str] = &["Gebeurtenis weergeven - ", "View event – ", "View event - "];
 
 /// One deadline from the Ufora feed.
 #[derive(Debug, Clone, PartialEq)]
@@ -90,13 +102,19 @@ pub fn parse(ics_text: &str) -> Result<Vec<UforaDeadline>> {
     Ok(deadlines)
 }
 
-/// "Sprint 1 - Verwacht" → "Sprint 1"; None when the title isn't a deadline.
+/// "Sprint 1 - Verwacht" or "Sprint 1 - Due" → "Sprint 1"; None when the title
+/// isn't a deadline.
 pub fn deadline_title(summary: &str) -> Option<&str> {
-    DEADLINE_SUFFIXES
-        .iter()
-        .find_map(|suffix| summary.trim().strip_suffix(suffix))
-        .map(str::trim)
-        .filter(|title| !title.is_empty())
+    let summary = summary.trim();
+    for label in DEADLINE_LABELS {
+        for separator in SEPARATORS {
+            if let Some(title) = summary.strip_suffix(&format!("{separator}{label}")) {
+                let title = title.trim();
+                return (!title.is_empty()).then_some(title);
+            }
+        }
+    }
+    None
 }
 
 /// The course code in a LOCATION: "E761080A - Machinaal leren" → "E761080A",
@@ -118,14 +136,16 @@ pub fn course_code(location: &str) -> Option<String> {
 }
 
 /// Split a description into its text and the best link to open in Ufora.
-/// The event link ("Gebeurtenis weergeven - https://…") is always last; an
+/// The event link ("Gebeurtenis weergeven - https://…", in English "View event –
+/// https://…") is always last; an
 /// assignment link ("Sprint 1 - https://…/dropbox/…") is preferred when there is one.
 pub fn split_description(description: &str) -> (Option<String>, Option<String>) {
-    let (text, event_link) = match description.rfind(EVENT_LINK_LABEL) {
-        Some(at) => (
-            &description[..at],
-            Some(description[at + EVENT_LINK_LABEL.len()..].trim()),
-        ),
+    // Where the event link line starts, and how long its label is.
+    let found = EVENT_LINK_LABELS
+        .iter()
+        .find_map(|label| description.rfind(label).map(|at| (at, label.len())));
+    let (text, event_link) = match found {
+        Some((at, length)) => (&description[..at], Some(description[at + length..].trim())),
         None => (description, None),
     };
 
@@ -188,6 +208,22 @@ mod tests {
     }
 
     #[test]
+    fn english_deadline_titles() {
+        assert_eq!(deadline_title("Sprint 1 - Due"), Some("Sprint 1"));
+        assert_eq!(deadline_title("Quiz 3 - Availability Ends"), Some("Quiz 3"));
+        // The English export sometimes uses an en dash.
+        assert_eq!(
+            deadline_title("Verslag – Availability Ends"),
+            Some("Verslag")
+        );
+        assert_eq!(
+            deadline_title("Rotaties en reflecties [oplossingen] – Available"),
+            None
+        );
+        assert_eq!(deadline_title("Werkcollege 8 - Available"), None);
+    }
+
+    #[test]
     fn course_codes() {
         assert_eq!(
             course_code("E761080A - Machinaal leren").as_deref(),
@@ -216,6 +252,11 @@ mod tests {
         // Without an assignment link, the event itself.
         let (_, url) = split_description("Gebeurtenis weergeven - https://ufora.ugent.be/e/3");
         assert_eq!(url.as_deref(), Some("https://ufora.ugent.be/e/3"));
+
+        // English: "View event – " with an en dash.
+        let (text, url) = split_description("Hand in.\n\nView event – https://ufora.ugent.be/e/4");
+        assert_eq!(url.as_deref(), Some("https://ufora.ugent.be/e/4"));
+        assert_eq!(text.as_deref(), Some("Hand in."));
     }
 
     #[test]

@@ -211,5 +211,11 @@
   "deadline.openInUfora": "Open in Ufora",
   "urgent.movedFrom": "moved, was {day}",
   "feeds.uforaNote": "Ufora deadlines are linked to a course by its code.",
-  "feeds.uforaAdd": "Add your Ufora calendar link under Settings → Schedule to get its deadlines here."
+  "feeds.uforaAdd": "Add your Ufora calendar link under Settings → Schedule to get its deadlines here.",
+  "schedule.earlierImport": "Earlier import",
+  "schedule.removeImport": "Remove this import",
+  "schedule.confirmRemoveImport.one": "Remove this class, with its activities? It stays if your TimeEdit link also has it; importing the file again brings it back.",
+  "schedule.confirmRemoveImport.other": "Remove these {count} classes, with their activities? Classes your TimeEdit link also has stay; importing the file again brings them back.",
+  "schedule.importRemoved.one": "Import removed, with {count} class.",
+  "schedule.importRemoved.other": "Import removed, with {count} classes."
 }

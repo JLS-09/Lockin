@@ -2,14 +2,16 @@
   // Settings → Schedule: the feeds, TimeEdit (classes) and Ufora (deadlines).
   // Paste either link to add one (Lockin tells them apart and syncs right away),
   // sync all again, remove one, or import the earlier weeks from a downloaded
-  // TimeEdit file. Not in the mockups; built in the style of the panels.
+  // TimeEdit file (and remove such an import again). Not in the mockups; built
+  // in the style of the panels.
   // The full link is never shown: it holds a personal key.
-  import { api, type FeedInfo } from "$lib/api";
-  import { formatAgo, t, tn } from "$lib/i18n/index.svelte";
+  import { api, type FeedInfo, type HistoryImport } from "$lib/api";
+  import { formatAgo, formatRange, t, tn } from "$lib/i18n/index.svelte";
 
   let { onChange }: { onChange?: () => void } = $props();
 
   let feeds = $state<FeedInfo[]>([]);
+  let imports = $state<HistoryImport[]>([]);
   let url = $state("");
   let busy = $state(false);
   let confirming = $state<string | null>(null);
@@ -19,7 +21,7 @@
 
   async function load() {
     try {
-      feeds = await api.feeds();
+      [feeds, imports] = await Promise.all([api.feeds(), api.historyImports()]);
     } catch (e) {
       message = { text: String(e), error: true };
     }
@@ -83,9 +85,21 @@
     if (!file) return;
     const text = await file.text();
     run(async () => {
-      const result = await api.importHistory(text);
+      const result = await api.importHistory(text, file.name);
       return t("schedule.historyResult", { added: result.added, total: result.total });
     });
+  }
+
+  function removeImport(item: HistoryImport) {
+    confirming = null;
+    run(async () => tn("schedule.importRemoved", await api.removeHistoryImport(item.id)));
+  }
+
+  /** "48 classes · 21 Sep – 27 Oct" */
+  function importDetail(item: HistoryImport): string {
+    const count = tn("schedule.classes", item.classes);
+    if (!item.firstStart || !item.lastStart) return count;
+    return `${count} · ${formatRange(new Date(item.firstStart), new Date(item.lastStart))}`;
   }
 
   function lastSync(feed: FeedInfo): string {
@@ -151,6 +165,30 @@
     <input bind:this={fileInput} type="file" accept=".ics,text/calendar" hidden onchange={importFile} />
     <button class="btn btn-small" disabled={busy} onclick={() => fileInput.click()}>{t("schedule.historyButton")}</button>
   </div>
+
+  {#if imports.length > 0}
+    <ul class="imports">
+      {#each imports as item (item.id)}
+        {@const name = item.name ?? t("schedule.earlierImport")}
+        <li>
+          {#if confirming === item.id}
+            <span class="confirm">{tn("schedule.confirmRemoveImport", item.classes)}</span>
+            <button class="btn btn-small btn-danger" disabled={busy} onclick={() => removeImport(item)}>{t("schedule.remove")}</button>
+            <button class="btn btn-small" onclick={() => (confirming = null)}>{t("template.cancel")}</button>
+          {:else}
+            <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 3H6v18h12V7zM14 3v4h4" /></svg>
+            <span class="text">
+              <span class="ellipsis" title={name}>{name}</span>
+              <span class="sub">{importDetail(item)}</span>
+            </span>
+            <button class="tool" aria-label={t("schedule.removeImport")} title={t("schedule.removeImport")} onclick={() => (confirming = item.id)}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13" /></svg>
+            </button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
 
   {#if message}
     <p class="panel-hint" class:error={message.error} role="status">{message.text}</p>
@@ -250,6 +288,10 @@
 
   .history {
     gap: var(--space-3);
+  }
+
+  .imports {
+    margin-top: var(--space-1);
   }
 
   input {

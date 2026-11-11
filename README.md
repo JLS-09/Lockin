@@ -127,7 +127,9 @@ with "zelfstandig werk" in the title.
 A TimeEdit subscription never includes classes older than 14 days. When you start
 mid-semester, download the earlier weeks once in TimeEdit (**Download → iCal**) and import
 the file with **Settings → Schedule → Import file…**. Only past classes Lockin doesn't know
-yet are added, and the file isn't saved as a feed.
+yet are added, and the file isn't saved as a feed. Each import is listed under the button
+and can be removed again: its classes disappear with their activities (classes the live
+feed also has stay), and importing the file again brings them back.
 
 Running a sync again updates classes by their iCal UID: a class whose time changed is marked
 `moved`, and a future class that disappears from the feed is marked `cancelled` instead of
@@ -140,7 +142,8 @@ In Ufora, open the calendar, turn on **Enable calendar feeds** in its settings, 
 the TimeEdit link: Lockin recognises it.
 
 The feed holds every event of every Ufora course, so Lockin keeps only due dates
-("… - Verwacht") and ends of availability ("… - Beschikbaarheid eindigt", "… - verloopt"),
+("… - Verwacht" / "… - Due") and ends of availability ("… - Beschikbaarheid eindigt",
+"… - verloopt" / "… - Availability Ends"); Ufora in Dutch and in English both work,
 and only for courses it knows from TimeEdit (matched on the course code). A deadline that
 is already past the first time it comes in counts as done. Like classes, deadlines are
 matched on their UID: a changed due date is marked moved, one that leaves the feed is
@@ -158,6 +161,7 @@ cargo run -p lockin-daemon -- week                        # this week's classes,
 cargo run -p lockin-daemon -- courses                     # the courses found in the schedule
 cargo run -p lockin-daemon -- feeds                       # what each saved feed contains
 cargo run -p lockin-daemon -- import-history <file>.ics   # earlier weeks from a download
+cargo run -p lockin-daemon -- imports                     # the imported files; remove one with remove-import <id>
 cargo run -p lockin-daemon -- add-deadline 2026-11-16 "Lab report 2" E702010A  # due 23:59
 cargo run -p lockin-daemon -- urgent                      # open activities and deadlines, most urgent first
 ```

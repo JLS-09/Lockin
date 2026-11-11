@@ -11,7 +11,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 /// don't need their own sqlx dependency.
 pub type Pool = SqlitePool;
 
-use crate::model::{CalendarSource, ClassBlock, Course, CourseKind, FeedEvent, FilterRule};
+use crate::model::{
+    CalendarSource, ClassBlock, Course, CourseKind, FeedEvent, FilterRule, HistoryImport,
+};
 use crate::{activity, filter};
 use crate::{new_id, now_text, title};
 
@@ -485,15 +487,32 @@ pub async fn save_feed(
 ///
 /// - Only blocks that started before now are added; the live feed handles the rest.
 /// - A block that Lockin already has (same UID, or same title and start time) is skipped,
-///   so it never overwrites what the live feed saved.
-/// - The file is not saved as a feed: `sync` never reads it again.
+///   so it never overwrites what the live feed saved. The exception: a block of an
+///   import that was removed comes back, with its id, so its activities come back too.
+/// - The file is not saved as a feed: `sync` never reads it again. The import is
+///   remembered under `name` (the file name), so it can be removed (`remove_history_import`).
 ///
 /// Returns how many blocks were added.
-pub async fn import_history(pool: &SqlitePool, events: &[FeedEvent]) -> Result<u32> {
+pub async fn import_history(
+    pool: &SqlitePool,
+    events: &[FeedEvent],
+    name: Option<&str>,
+) -> Result<u32> {
     let rules = filter_rules(pool).await?;
     let now = Utc::now();
     let mut added = 0;
     let mut transaction = pool.begin().await?;
+
+    let import_id = new_id();
+    sqlx::query(
+        "INSERT INTO history_import (id, name, imported_at, updated_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(&import_id)
+    .bind(name)
+    .bind(now_text())
+    .bind(now_text())
+    .execute(&mut *transaction)
+    .await?;
 
     for event in events {
         if event.start >= now {
@@ -501,17 +520,34 @@ pub async fn import_history(pool: &SqlitePool, events: &[FeedEvent]) -> Result<u
         }
 
         let start = time_text(event.start);
-        let known: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM class_block
-             WHERE ical_uid = ? OR (title = ? AND start_at = ?)",
+        // (id, deleted, source_id) of a block Lockin already has.
+        let known: Option<(String, bool, Option<String>)> = sqlx::query_as(
+            "SELECT id, deleted, source_id FROM class_block
+             WHERE ical_uid = ? OR (title = ? AND start_at = ?)
+             ORDER BY deleted
+             LIMIT 1",
         )
         .bind(&event.uid)
         .bind(&event.title)
         .bind(&start)
-        .fetch_one(&mut *transaction)
+        .fetch_optional(&mut *transaction)
         .await?;
-        if known > 0 {
-            continue;
+        match known {
+            // From a removed import: it comes back, now part of this import.
+            Some((id, true, None)) => {
+                sqlx::query(
+                    "UPDATE class_block SET deleted = 0, import_id = ?, updated_at = ? WHERE id = ?",
+                )
+                .bind(&import_id)
+                .bind(now_text())
+                .bind(&id)
+                .execute(&mut *transaction)
+                .await?;
+                added += 1;
+                continue;
+            }
+            Some(_) => continue,
+            None => {}
         }
 
         let parsed = title::parse(&event.title);
@@ -531,8 +567,8 @@ pub async fn import_history(pool: &SqlitePool, events: &[FeedEvent]) -> Result<u
         sqlx::query(
             "INSERT INTO class_block
                (id, ical_uid, course_id, kind, title, location, description,
-                start_at, end_at, ignored_by_rule, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                start_at, end_at, ignored_by_rule, import_id, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(new_id())
         .bind(&event.uid)
@@ -544,15 +580,79 @@ pub async fn import_history(pool: &SqlitePool, events: &[FeedEvent]) -> Result<u
         .bind(&start)
         .bind(time_text(event.end))
         .bind(ignored)
+        .bind(&import_id)
         .bind(now_text())
         .execute(&mut *transaction)
         .await?;
         added += 1;
     }
 
+    // Nothing new: don't keep an empty import in the list.
+    if added == 0 {
+        sqlx::query("DELETE FROM history_import WHERE id = ?")
+            .bind(&import_id)
+            .execute(&mut *transaction)
+            .await?;
+    }
+
     transaction.commit().await?;
     activity::apply_templates(pool).await?;
     Ok(added)
+}
+
+/// The file imports that still hold classes, newest first. Classes the live
+/// feed has taken over (they have a source now) don't count.
+pub async fn history_imports(pool: &SqlitePool) -> Result<Vec<HistoryImport>> {
+    let imports = sqlx::query_as(
+        "SELECT h.id, h.name, h.imported_at, COUNT(b.id) AS classes,
+                MIN(b.start_at) AS first_start, MAX(b.start_at) AS last_start
+         FROM history_import h
+         JOIN class_block b
+           ON b.import_id = h.id AND b.deleted = 0 AND b.source_id IS NULL
+         WHERE h.deleted = 0
+         GROUP BY h.id
+         ORDER BY h.imported_at DESC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(imports)
+}
+
+/// Remove a file import: its classes are hidden (with their activities), except
+/// the ones the live feed also has. Importing the file again brings them back.
+/// Returns how many classes were hidden.
+pub async fn remove_history_import(pool: &SqlitePool, import_id: &str) -> Result<u32> {
+    let now = now_text();
+    let mut transaction = pool.begin().await?;
+    let result = sqlx::query(
+        "UPDATE class_block SET deleted = 1, updated_at = ?
+         WHERE import_id = ? AND source_id IS NULL AND deleted = 0",
+    )
+    .bind(&now)
+    .bind(import_id)
+    .execute(&mut *transaction)
+    .await?;
+    sqlx::query("UPDATE history_import SET deleted = 1, updated_at = ? WHERE id = ?")
+        .bind(&now)
+        .bind(import_id)
+        .execute(&mut *transaction)
+        .await?;
+    transaction.commit().await?;
+    Ok(result.rows_affected() as u32)
+}
+
+/// Find a file import by the first characters of its id, as the `imports` command shows them.
+pub async fn find_history_import_id(pool: &SqlitePool, start_of_id: &str) -> Result<String> {
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM history_import WHERE deleted = 0 AND id LIKE ?")
+            .bind(format!("{start_of_id}%"))
+            .fetch_all(pool)
+            .await?;
+    match ids.as_slice() {
+        [id] => Ok(id.clone()),
+        [] => bail!("no import with an id starting with {start_of_id}"),
+        _ => bail!("more than one import starts with {start_of_id}, type more characters"),
+    }
 }
 
 /// All blocks that start between `from` and `to`, sorted by start time.

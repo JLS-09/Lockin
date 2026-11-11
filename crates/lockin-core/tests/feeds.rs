@@ -64,8 +64,12 @@ async fn a_saved_feed_that_fails_is_kept() {
 async fn history_from_text_adds_past_classes_only() {
     let pool = db::open_in_memory().await.unwrap();
     // The sample's classes are all in 2099: none is in the past.
-    let (added, total) = import::import_history_text(&pool, SAMPLE).await.unwrap();
+    let (added, total) = import::import_history_text(&pool, SAMPLE, Some("sample.ics"))
+        .await
+        .unwrap();
     assert_eq!((added, total), (0, 4));
+    // Nothing added: no empty import is kept in the list.
+    assert!(db::history_imports(&pool).await.unwrap().is_empty());
 }
 
 #[tokio::test]

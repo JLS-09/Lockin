@@ -12,6 +12,8 @@ const USAGE: &str = "usage: lockin-daemon <command>
   sync <url>               save a new feed (TimeEdit or Ufora) and fetch it
   sync-file <file.ics>     same, from a saved file
   import-history <file>    add past blocks once, from a TimeEdit download
+  imports                  list the imported files
+  remove-import <id>       remove an imported file's classes
   feeds                    list the saved feeds and what each one contains
   remove-feed <id>         remove a feed, then fetch the other feeds again
   week                     show this week's blocks
@@ -55,7 +57,10 @@ async fn main() -> Result<()> {
         (Some("import-history"), Some(file)) => {
             let text = std::fs::read_to_string(file)?;
             let events = timeedit::parse(&text)?;
-            let added = db::import_history(&pool, &events).await?;
+            let name = std::path::Path::new(file)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string());
+            let added = db::import_history(&pool, &events, name.as_deref()).await?;
             println!(
                 "{added} past blocks added, {} skipped (already known or not in the past).",
                 events.len() as u32 - added
@@ -148,6 +153,25 @@ async fn main() -> Result<()> {
             deadline::remove(&pool, &deadline_id).await?;
         }
         (Some("urgent"), _) => show_urgent(&pool).await?,
+        (Some("imports"), _) => {
+            let imports = db::history_imports(&pool).await?;
+            if imports.is_empty() {
+                println!("No imported files.");
+            }
+            for item in imports {
+                println!(
+                    "{}  {}  {} classes",
+                    &item.id[..8],
+                    item.name.as_deref().unwrap_or("(earlier import)"),
+                    item.classes
+                );
+            }
+        }
+        (Some("remove-import"), Some(id)) => {
+            let import_id = db::find_history_import_id(&pool, id).await?;
+            let hidden = db::remove_history_import(&pool, &import_id).await?;
+            println!("Removed, with {hidden} classes.");
+        }
         _ => bail!(USAGE),
     }
 
