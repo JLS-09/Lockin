@@ -8,6 +8,7 @@ pub mod filter;
 pub mod import;
 pub mod model;
 pub mod paths;
+pub mod session;
 pub mod timeedit;
 pub mod title;
 pub mod ufora;

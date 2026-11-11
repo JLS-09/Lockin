@@ -1,10 +1,10 @@
-//! For now the daemon is a small command-line tool, to test phase 1.
-//! In phase 4 it becomes the systemd user service.
+//! For now the daemon is a command-line tool, to test each step.
+//! In phase 4 step 2 it gets a `run` command: the systemd user service.
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
-use lockin_core::model::{FeedEvent, FeedSync};
-use lockin_core::{db, deadline, import, paths, timeedit, urgent};
+use lockin_core::model::{FeedEvent, FeedSync, StudySession};
+use lockin_core::{db, deadline, import, paths, session, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
 
@@ -30,7 +30,22 @@ const USAGE: &str = "usage: lockin-daemon <command>
   deadlines                list all deadlines
   done-deadline <id>       check a deadline off
   remove-deadline <id>     remove a deadline
-  urgent                   the Urgent list: open activities and deadlines";
+  urgent                   the Urgent list: open activities and deadlines
+
+  plan-session <when> <end> [title] [course code]
+                           plan a study session; <when> is \"2026-11-18 13:00\",
+                           <end> 15:30 (same day); use - for no title
+  plan-weekly <when> <end> [title] [course code]
+                           the same, every week until the end of the semester
+  sessions                 list last week's and the coming study sessions
+  session-status           the running session (study time, break credit) or the next one
+  remove-session <id>      remove a session that hasn't started yet
+  remove-following <id>    remove it and the later weeks of its repeat
+  tick                     do once what the daemon will do every few seconds:
+                           start, end or mark missed the sessions that are due
+  break                    take a break in the running session (needs credit)
+  resume                   end the break
+  emergency-stop           end the running session now";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -171,6 +186,62 @@ async fn main() -> Result<()> {
             let import_id = db::find_history_import_id(&pool, id).await?;
             let hidden = db::remove_history_import(&pool, &import_id).await?;
             println!("Removed, with {hidden} classes.");
+        }
+        (Some(command @ ("plan-session" | "plan-weekly")), Some(when)) => {
+            let Some(end) = args.get(3) else {
+                bail!(USAGE);
+            };
+            let title = args.get(4).map(String::as_str).filter(|t| *t != "-");
+            let course_id = match args.get(5) {
+                Some(code) => Some(course_id_for_code(&pool, code).await?),
+                None => None,
+            };
+            plan_session(
+                &pool,
+                command == "plan-weekly",
+                when,
+                end,
+                title,
+                course_id.as_deref(),
+            )
+            .await?;
+        }
+        (Some("sessions"), _) => show_sessions(&pool).await?,
+        (Some("session-status"), _) => show_session_status(&pool).await?,
+        (Some("remove-session"), Some(id)) => {
+            let session_id = session::find_id(&pool, id).await?;
+            session::remove(&pool, &session_id, Utc::now()).await?;
+            println!("Study session removed.");
+        }
+        (Some("remove-following"), Some(id)) => {
+            let session_id = session::find_id(&pool, id).await?;
+            let removed = session::remove_following(&pool, &session_id, Utc::now()).await?;
+            println!("{removed} study sessions removed.");
+        }
+        (Some("tick"), _) => {
+            let result = session::tick(&pool, Utc::now()).await?;
+            println!(
+                "{} started, {} ended, {} breaks over, {} missed",
+                result.started.len(),
+                result.ended.len(),
+                result.resumed.len(),
+                result.missed.len()
+            );
+        }
+        (Some("break"), _) => {
+            let running = running_session(&pool).await?;
+            session::take_break(&pool, &running.id, Utc::now()).await?;
+            show_session_status(&pool).await?;
+        }
+        (Some("resume"), _) => {
+            let running = running_session(&pool).await?;
+            session::resume(&pool, &running.id, Utc::now(), None).await?;
+            show_session_status(&pool).await?;
+        }
+        (Some("emergency-stop"), _) => {
+            let running = running_session(&pool).await?;
+            session::emergency_stop(&pool, &running.id, Utc::now()).await?;
+            println!("Study session stopped.");
         }
         _ => bail!(USAGE),
     }
@@ -362,6 +433,162 @@ async fn show_urgent(pool: &db::Pool) -> Result<()> {
             course_name(&courses, item.course_id.as_deref()),
             when
         );
+    }
+    Ok(())
+}
+
+/// "2026-11-18 13:00" plus "15:30": a session that day, in local time.
+async fn plan_session(
+    pool: &db::Pool,
+    weekly: bool,
+    when: &str,
+    end: &str,
+    title: Option<&str>,
+    course_id: Option<&str>,
+) -> Result<()> {
+    let Some((date_text, start_text)) = when.split_once([' ', 'T']) else {
+        bail!("give a date and a start time, like \"2026-11-18 13:00\"");
+    };
+    let Ok(date) = NaiveDate::parse_from_str(date_text, "%Y-%m-%d") else {
+        bail!("not a date: {date_text} (write it as 2026-11-18)");
+    };
+    let clock = |text: &str| match NaiveTime::parse_from_str(text, "%H:%M") {
+        Ok(time) => Ok(time),
+        Err(_) => Err(anyhow::anyhow!("not a time: {text} (write it as 13:00)")),
+    };
+    let (start_time, end_time) = (clock(start_text)?, clock(end)?);
+
+    if weekly {
+        let result = session::plan_weekly(
+            pool,
+            course_id,
+            title,
+            date,
+            start_time,
+            end_time,
+            None,
+            Utc::now(),
+        )
+        .await?;
+        print!("{} weekly study sessions planned", result.planned);
+        if result.overlapping > 0 {
+            print!(
+                ", {} weeks left out (they overlap another session)",
+                result.overlapping
+            );
+        }
+        println!(".");
+    } else {
+        let start = session::local_time(date, start_time)?;
+        let end = session::local_time(date, end_time)?;
+        session::plan(pool, course_id, title, start, end, Utc::now()).await?;
+        println!(
+            "Study session planned, {}.",
+            session_times(&StudySession {
+                id: String::new(),
+                series_id: None,
+                course_id: None,
+                title: None,
+                start_at: start.to_rfc3339(),
+                end_at: end.to_rfc3339(),
+                status: String::new(),
+            })?
+        );
+    }
+    Ok(())
+}
+
+/// "Wed 18 Nov 13:00-15:30"
+fn session_times(item: &StudySession) -> Result<String> {
+    let start = chrono::DateTime::parse_from_rfc3339(&item.start_at)?.with_timezone(&Local);
+    let end = chrono::DateTime::parse_from_rfc3339(&item.end_at)?.with_timezone(&Local);
+    Ok(format!(
+        "{} {}-{}",
+        start.format("%a %d %b"),
+        start.format("%H:%M"),
+        end.format("%H:%M")
+    ))
+}
+
+/// "13:05" as minutes and seconds: "1:10:24" or "4:58".
+fn duration_text(seconds: i64) -> String {
+    let seconds = seconds.max(0);
+    let (hours, minutes, rest) = (seconds / 3600, seconds / 60 % 60, seconds % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{rest:02}")
+    } else {
+        format!("{minutes}:{rest:02}")
+    }
+}
+
+/// The running session, or an error that says there is none.
+async fn running_session(pool: &db::Pool) -> Result<StudySession> {
+    match session::running(pool).await? {
+        Some(running) => Ok(running),
+        None => bail!("no study session is running"),
+    }
+}
+
+async fn show_sessions(pool: &db::Pool) -> Result<()> {
+    let courses = db::courses(pool).await?;
+    let now = Utc::now();
+    let sessions =
+        session::between(pool, now - Duration::days(7), now + Duration::days(60)).await?;
+    if sessions.is_empty() {
+        println!(
+            "No study sessions. Plan one with: lockin-daemon plan-session \"2026-11-18 13:00\" 15:30"
+        );
+    }
+    for item in sessions {
+        // "Databanken · Exercises · weekly", leaving out what's empty.
+        let course = course_name(&courses, item.course_id.as_deref());
+        let repeat = item.series_id.as_ref().map(|_| "weekly".to_string());
+        let about: Vec<String> = [Some(course), item.title.clone(), repeat]
+            .into_iter()
+            .flatten()
+            .filter(|part| !part.is_empty())
+            .collect();
+        println!(
+            "{}  {}  {:<8} {}",
+            &item.id[..8],
+            session_times(&item)?,
+            item.status,
+            about.join(" · ")
+        );
+    }
+    Ok(())
+}
+
+async fn show_session_status(pool: &db::Pool) -> Result<()> {
+    let now = Utc::now();
+    let Some(running) = session::running(pool).await? else {
+        match session::next(pool, now).await? {
+            Some(next) => println!("No study session running. Next: {}.", session_times(&next)?),
+            None => println!("No study session running, none planned."),
+        }
+        return Ok(());
+    };
+    let state = session::state_now(pool, &running, now).await?;
+    let end = chrono::DateTime::parse_from_rfc3339(&running.end_at)?.with_timezone(&Utc);
+    println!(
+        "Study session {} ({})",
+        session_times(&running)?,
+        state.phase
+    );
+    println!(
+        "  studied {}, {} left",
+        duration_text(state.worked_seconds),
+        duration_text((end - now).num_seconds())
+    );
+    println!(
+        "  break credit {} left ({} earned, {} used)",
+        duration_text(state.credit_left_seconds),
+        duration_text(state.credit_earned_seconds),
+        duration_text(state.credit_used_seconds)
+    );
+    if let Some(ends) = state.break_ends_at {
+        let ends = chrono::DateTime::parse_from_rfc3339(&ends)?.with_timezone(&Local);
+        println!("  on a break until {}", ends.format("%H:%M:%S"));
     }
     Ok(())
 }

@@ -233,3 +233,79 @@ pub struct UrgentItem {
     /// Higher = more urgent; the list is sorted on it. See `urgent::score`.
     pub score: f64,
 }
+
+/// A planned block of study time. The daemon starts and ends it on time.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StudySession {
+    pub id: String,
+    /// The weekly repeat it belongs to; None if it was planned once.
+    pub series_id: Option<String>,
+    pub course_id: Option<String>,
+    /// What you plan to do, e.g. "Exercises WPO 4"; None for a plain session.
+    pub title: Option<String>,
+    /// RFC 3339 in UTC.
+    pub start_at: String,
+    pub end_at: String,
+    /// "planned", "running", "done", "stopped", "missed" or "skipped".
+    pub status: String,
+}
+
+/// One line of a session's log: start, break, resume, emergency or end.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionEvent {
+    pub id: String,
+    pub session_id: String,
+    /// "start", "break", "resume", "emergency" or "end".
+    pub kind: String,
+    /// RFC 3339 in UTC.
+    pub at: String,
+    /// Extra information, e.g. "daemon" on a start or "auto" on a resume.
+    pub detail: Option<String>,
+}
+
+/// Where a session stands at a moment, worked out from its log (`session::state`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionState {
+    /// "planned" (not started), "working", "break" or "over".
+    pub phase: String,
+    /// Time studied so far, breaks not counted.
+    pub worked_seconds: i64,
+    /// Break credit built up by studying.
+    pub credit_earned_seconds: i64,
+    /// Break credit already spent on breaks.
+    pub credit_used_seconds: i64,
+    /// What's left to spend: earned minus used.
+    pub credit_left_seconds: i64,
+    /// During a break: when blocking turns back on. RFC 3339 in UTC.
+    pub break_ends_at: Option<String>,
+    /// True while working with some credit left.
+    pub can_take_break: bool,
+}
+
+/// What planning a weekly repeat made.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlanResult {
+    pub series_id: String,
+    /// Sessions made.
+    pub planned: u32,
+    /// Weeks left out because they overlap another session.
+    pub overlapping: u32,
+}
+
+/// What one tick of the daemon changed (`session::tick`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TickResult {
+    /// Sessions that started now.
+    pub started: Vec<String>,
+    /// Sessions that reached their end.
+    pub ended: Vec<String>,
+    /// Sessions whose break ran out, so blocking is back on.
+    pub resumed: Vec<String>,
+    /// Sessions whose start passed while the daemon wasn't running.
+    pub missed: Vec<String>,
+}
