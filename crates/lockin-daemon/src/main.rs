@@ -13,6 +13,7 @@ const USAGE: &str = "usage: lockin-daemon <command>
   run                      the background service: starts and ends study sessions
                            on time and syncs the feeds every hour (lockin.service
                            runs this; tools/install-daemon.sh installs it)
+  status                   ask the running daemon whether it's up and when it last synced
 
   sync                     fetch all saved feeds again
   sync <url>               save a new feed (TimeEdit or Ufora) and fetch it
@@ -63,6 +64,24 @@ async fn main() -> Result<()> {
 
     match (command, argument) {
         (Some("run"), _) => service::run(pool).await?,
+        (Some("status"), _) => {
+            let response = lockin_core::ipc::send(&lockin_core::ipc::Request::Status).await?;
+            if let Some(status) = response.status {
+                let since = chrono::DateTime::parse_from_rfc3339(&status.started_at)?;
+                print!(
+                    "lockin-daemon {} running since {}",
+                    status.version,
+                    since.with_timezone(&Local).format("%a %d %b %H:%M")
+                );
+                match status.last_sync_at {
+                    Some(last) => {
+                        let last = chrono::DateTime::parse_from_rfc3339(&last)?;
+                        println!(", last sync {}", last.with_timezone(&Local).format("%H:%M"));
+                    }
+                    None => println!(", no feeds yet"),
+                }
+            }
+        }
         (Some("sync"), None) => sync_all(&pool).await?,
         (Some("sync"), Some(url)) => {
             let result = import::add_feed(&pool, url).await?;

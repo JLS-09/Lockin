@@ -188,6 +188,78 @@ export interface Week {
   activities: Activity[];
 }
 
+export type SessionStatus = "planned" | "running" | "done" | "stopped" | "missed" | "skipped";
+
+/** A planned block of study time; the daemon starts and ends it on time. */
+export interface StudySession {
+  id: string;
+  /** The weekly repeat it belongs to; null if it was planned once. */
+  seriesId: string | null;
+  courseId: string | null;
+  /** What you plan to do, e.g. "Exercises WPO 4"; null for a plain session. */
+  title: string | null;
+  startAt: string;
+  endAt: string;
+  status: SessionStatus;
+}
+
+export type SessionEventKind = "start" | "break" | "resume" | "emergency" | "end";
+
+/** One line of a session's log. */
+export interface SessionEvent {
+  id: string;
+  sessionId: string;
+  kind: SessionEventKind;
+  at: string;
+  /** "daemon" or "late" on a start, "auto" on a resume when the break ran out. */
+  detail: string | null;
+}
+
+export type SessionPhase = "planned" | "working" | "break" | "over";
+
+/** Where a session stands, worked out from its log (`session::state`). */
+export interface SessionState {
+  phase: SessionPhase;
+  workedSeconds: number;
+  creditEarnedSeconds: number;
+  creditUsedSeconds: number;
+  creditLeftSeconds: number;
+  /** During a break: when blocking turns back on. */
+  breakEndsAt: string | null;
+  canTakeBreak: boolean;
+}
+
+/** The running session with its state and log. */
+export interface CurrentSession {
+  session: StudySession;
+  state: SessionState;
+  events: SessionEvent[];
+  /** The break rules from session.rs: `creditMinutes` per `creditEveryMinutes` studied,
+   *  one break at most `breakMinutes`. */
+  creditMinutes: number;
+  creditEveryMinutes: number;
+  breakMinutes: number;
+  /** The emergency button: hold this long; costs these points (from step 6). */
+  emergencyWaitSeconds: number;
+  emergencyPenaltyPoints: number;
+}
+
+export interface PlanResult {
+  seriesId: string;
+  /** Sessions made. */
+  planned: number;
+  /** Weeks left out because they overlap another session. */
+  overlapping: number;
+}
+
+/** The daemon's answer to "are you there?". */
+export interface DaemonStatus {
+  version: string;
+  startedAt: string;
+  /** The most recent feed sync; null without feeds. */
+  lastSyncAt: string | null;
+}
+
 export const api = {
   courses: () => invoke<Course[]>("courses"),
   courseKinds: () => invoke<CourseKind[]>("course_kinds"),
@@ -248,4 +320,39 @@ export const api = {
   /** Returns how many classes changed. */
   addRule: (pattern: string) => invoke<number>("add_rule", { pattern }),
   removeRule: (ruleId: string) => invoke<number>("remove_rule", { ruleId }),
+
+  /** Sessions that start between `from` and `to` (RFC 3339). */
+  sessions: (from: string, to: string) => invoke<StudySession[]>("sessions", { from, to }),
+  /** The running session, or null. */
+  currentSession: () => invoke<CurrentSession | null>("current_session"),
+  /** Returns the new id. Times are RFC 3339. */
+  planSession: (courseId: string | null, title: string | null, start: string, end: string) =>
+    invoke<string>("plan_session", { courseId, title, start, end }),
+  /** Every week from this first one, until `until` (YYYY-MM-DD) or the end of the semester. */
+  planWeekly: (
+    courseId: string | null,
+    title: string | null,
+    start: string,
+    end: string,
+    until: string | null,
+  ) => invoke<PlanResult>("plan_weekly", { courseId, title, start, end, until }),
+  updateSession: (
+    sessionId: string,
+    courseId: string | null,
+    title: string | null,
+    start: string,
+    end: string,
+  ) => invoke<void>("update_session", { sessionId, courseId, title, start, end }),
+  removeSession: (sessionId: string) => invoke<void>("remove_session", { sessionId }),
+  restoreSession: (sessionId: string) => invoke<void>("restore_session", { sessionId }),
+  /** This session and the later weeks of its repeat. Returns how many were removed. */
+  removeFollowingSessions: (sessionId: string) =>
+    invoke<number>("remove_following_sessions", { sessionId }),
+
+  /** The daemon's status, or null when it isn't running. */
+  daemonStatus: () => invoke<DaemonStatus | null>("daemon_status"),
+  /** These go through the daemon; they fail when it isn't running. */
+  takeBreak: () => invoke<void>("take_break"),
+  resumeSession: () => invoke<void>("resume_session"),
+  emergencyStop: () => invoke<void>("emergency_stop"),
 };

@@ -8,12 +8,14 @@
 //! Tauri turns snake_case argument names into camelCase on the JavaScript side:
 //! `block_id` here is `blockId` in `invoke`.
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Local, NaiveDate, Utc};
+use lockin_core::ipc::{self, DaemonStatus, Request};
 use lockin_core::model::{
     Activity, ActivityTemplate, ClassBlock, Course, CourseKind, Deadline, FeedInfo, FeedSync,
-    FilterRule, HistoryImport, UrgentItem, WeekClasses, WeekProgress,
+    FilterRule, HistoryImport, PlanResult, SessionEvent, SessionState, StudySession, UrgentItem,
+    WeekClasses, WeekProgress,
 };
-use lockin_core::{activity, db, deadline, import, paths, urgent};
+use lockin_core::{activity, db, deadline, import, paths, session, urgent};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -332,6 +334,200 @@ async fn remove_rule(pool: State<'_, db::Pool>, rule_id: String) -> CommandResul
     db::remove_rule(&pool, &rule_id).await.map_err(message)
 }
 
+// ---------- Study sessions ----------
+// Planning and changing sessions that haven't started is done here, on the
+// database. What happens to a running session goes through the daemon
+// (`lockin_core::ipc`), so it can switch blocking off and on at once.
+
+/// The sessions that start between `from` and `to` (RFC 3339), sorted by start.
+#[tauri::command]
+async fn sessions(
+    pool: State<'_, db::Pool>,
+    from: String,
+    to: String,
+) -> CommandResult<Vec<StudySession>> {
+    session::between(&pool, parse_time(&from)?, parse_time(&to)?)
+        .await
+        .map_err(message)
+}
+
+/// The running session with where it stands and its log, for the Session page
+/// and the sidebar.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CurrentSession {
+    session: StudySession,
+    state: SessionState,
+    events: Vec<SessionEvent>,
+    /// The break rules (`session.rs`), so the page shows "5 min per 30 min".
+    credit_minutes: i64,
+    credit_every_minutes: i64,
+    break_minutes: i64,
+    /// The emergency button: hold this long, costs these points (step 6 charges them).
+    emergency_wait_seconds: i64,
+    emergency_penalty_points: i64,
+}
+
+/// The running session, or null.
+#[tauri::command]
+async fn current_session(pool: State<'_, db::Pool>) -> CommandResult<Option<CurrentSession>> {
+    let Some(running) = session::running(&pool).await.map_err(message)? else {
+        return Ok(None);
+    };
+    let events = session::events(&pool, &running.id).await.map_err(message)?;
+    let state = session::state(&running, &events, Utc::now()).map_err(message)?;
+    Ok(Some(CurrentSession {
+        session: running,
+        state,
+        events,
+        credit_minutes: session::CREDIT_MINUTES,
+        credit_every_minutes: session::CREDIT_EVERY_MINUTES,
+        break_minutes: session::BREAK_MINUTES,
+        emergency_wait_seconds: session::EMERGENCY_WAIT_SECONDS,
+        emergency_penalty_points: session::EMERGENCY_PENALTY_POINTS,
+    }))
+}
+
+/// Plan one session; the course and title are optional. Returns its id.
+#[tauri::command]
+async fn plan_session(
+    pool: State<'_, db::Pool>,
+    course_id: Option<String>,
+    title: Option<String>,
+    start: String,
+    end: String,
+) -> CommandResult<String> {
+    let (start, end) = (parse_time(&start)?, parse_time(&end)?);
+    session::plan(
+        &pool,
+        course_id.as_deref(),
+        title.as_deref(),
+        start,
+        end,
+        Utc::now(),
+    )
+    .await
+    .map_err(message)
+}
+
+/// Plan a session every week from the first one (`start` to `end`), on the
+/// same weekday and local time, until `until` (YYYY-MM-DD) or the end of the semester.
+#[tauri::command]
+async fn plan_weekly(
+    pool: State<'_, db::Pool>,
+    course_id: Option<String>,
+    title: Option<String>,
+    start: String,
+    end: String,
+    until: Option<String>,
+) -> CommandResult<PlanResult> {
+    let start = parse_time(&start)?.with_timezone(&Local);
+    let end = parse_time(&end)?.with_timezone(&Local);
+    let until = match until {
+        Some(text) => Some(parse_date(&text)?),
+        None => None,
+    };
+    session::plan_weekly(
+        &pool,
+        course_id.as_deref(),
+        title.as_deref(),
+        start.date_naive(),
+        start.time(),
+        end.time(),
+        until,
+        Utc::now(),
+    )
+    .await
+    .map_err(message)
+}
+
+/// Change a session that hasn't started yet.
+#[tauri::command]
+async fn update_session(
+    pool: State<'_, db::Pool>,
+    session_id: String,
+    course_id: Option<String>,
+    title: Option<String>,
+    start: String,
+    end: String,
+) -> CommandResult<()> {
+    let (start, end) = (parse_time(&start)?, parse_time(&end)?);
+    session::update(
+        &pool,
+        &session_id,
+        course_id.as_deref(),
+        title.as_deref(),
+        start,
+        end,
+        Utc::now(),
+    )
+    .await
+    .map_err(message)
+}
+
+/// Remove a session that hasn't started yet; `restore_session` undoes it.
+#[tauri::command]
+async fn remove_session(pool: State<'_, db::Pool>, session_id: String) -> CommandResult<()> {
+    session::remove(&pool, &session_id, Utc::now())
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn restore_session(pool: State<'_, db::Pool>, session_id: String) -> CommandResult<()> {
+    session::restore(&pool, &session_id, Utc::now())
+        .await
+        .map_err(message)
+}
+
+/// Remove this session and the later weeks of its repeat. Returns how many.
+#[tauri::command]
+async fn remove_following_sessions(
+    pool: State<'_, db::Pool>,
+    session_id: String,
+) -> CommandResult<u32> {
+    session::remove_following(&pool, &session_id, Utc::now())
+        .await
+        .map_err(message)
+}
+
+/// The daemon's status, or null when it isn't running.
+#[tauri::command]
+async fn daemon_status() -> CommandResult<Option<DaemonStatus>> {
+    match ipc::send(&Request::Status).await {
+        Ok(response) => Ok(response.status),
+        Err(error) if error.to_string() == ipc::NOT_RUNNING => Ok(None),
+        Err(error) => Err(message(error)),
+    }
+}
+
+/// Ask the daemon to start a break in the running session.
+#[tauri::command]
+async fn take_break() -> CommandResult<()> {
+    ipc::send(&Request::TakeBreak)
+        .await
+        .map(|_| ())
+        .map_err(message)
+}
+
+/// Ask the daemon to end the break.
+#[tauri::command]
+async fn resume_session() -> CommandResult<()> {
+    ipc::send(&Request::Resume)
+        .await
+        .map(|_| ())
+        .map_err(message)
+}
+
+/// Ask the daemon to end the running session now (the emergency button).
+#[tauri::command]
+async fn emergency_stop() -> CommandResult<()> {
+    ipc::send(&Request::EmergencyStop)
+        .await
+        .map(|_| ())
+        .map_err(message)
+}
+
 // ---------- Blocks ----------
 
 /// "Got it" on the schedule changes banner.
@@ -413,6 +609,18 @@ pub fn run() {
             remove_history_import,
             add_rule,
             remove_rule,
+            sessions,
+            current_session,
+            plan_session,
+            plan_weekly,
+            update_session,
+            remove_session,
+            restore_session,
+            remove_following_sessions,
+            daemon_status,
+            take_break,
+            resume_session,
+            emergency_stop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Lockin app");

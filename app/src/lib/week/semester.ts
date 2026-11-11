@@ -110,3 +110,15 @@ export function donePercent(progress: WeekProgress[], weeks: string[], now: Date
   }
   return due === 0 ? null : Math.round((100 * done) / due);
 }
+
+/**
+ * The last day of the semester `date` falls in: 31 January (semester 1) or
+ * 31 July (semester 2). The same rule as `session::semester_end` in Rust, which
+ * decides where a weekly study session stops; this one only shows the date.
+ */
+export function semesterEnd(date: Date): Date {
+  const month = date.getMonth() + 1;
+  if (month >= 8) return new Date(date.getFullYear() + 1, 0, 31);
+  if (month === 1) return new Date(date.getFullYear(), 0, 31);
+  return new Date(date.getFullYear(), 6, 31);
+}

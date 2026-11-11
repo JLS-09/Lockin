@@ -22,6 +22,9 @@
   --pill: #2b2f38; /* "Today" pill */
   --tag: #2f333b; /* "Moved · was …" tag */
   --cancelled-surface: #1c1f26;
+  --session-surface: #23262d; /* a study session in the week grid */
+  --session-live-surface: #262a31; /* the running one */
+  --session-border: #3a3f48; /* a planned one */
   --kbd: rgb(0 0 0 / 0.18); /* the key hint on a button, e.g. "D" */
   --overlay: rgb(21 23 28 / 0.6); /* --bg, see-through: behind a card on top of content */
 

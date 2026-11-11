@@ -4,7 +4,11 @@
   // Built from scratch, no calendar library: everything can be styled with tokens.
   // Deadlines (not in the mockups) sit under the day headers as small chips,
   // like all-day events in a calendar: most are due at 23:59, after the grid ends.
-  import type { Activity, ClassBlock, Course, Deadline, FilterRule } from "$lib/api";
+  // Study sessions are blocks with a lock, as in the mockup: planned ones with a
+  // border, the running one pulsing with "Live" and the time left.
+  import type { Activity, ClassBlock, Course, Deadline, FilterRule, StudySession } from "$lib/api";
+  import { hoursText, live } from "$lib/session/live.svelte";
+  import { sessionAbout, sessionTimes } from "$lib/session/labels";
   import { isIgnored } from "$lib/api";
   import { formatDate, formatDay, formatTime, isoDate, t, tn } from "$lib/i18n/index.svelte";
   import { ignoringRule, kindLabel } from "$lib/week/labels";
@@ -23,6 +27,7 @@
     onSelect,
     onShowAnyway,
     onOpenDeadline,
+    onOpenSession,
   }: {
     layout: WeekLayout;
     activities: Activity[];
@@ -40,7 +45,15 @@
     onShowAnyway: (block: ClassBlock) => void;
     /** Click on a deadline chip. */
     onOpenDeadline: (deadline: Deadline) => void;
+    /** Click on a study session. */
+    onOpenSession: (session: StudySession) => void;
   } = $props();
+
+  /** The session's status, with the running one taken from `live` (it may have started since loading). */
+  function sessionStatus(session: StudySession): string {
+    if (live.current?.session.id === session.id) return "running";
+    return session.status;
+  }
 
   // The deadlines of each shown day ("2026-11-16" → […]), sorted by due time.
   const deadlinesByDay = $derived.by(() => {
@@ -249,6 +262,50 @@
     {/if}
   {/each}
 
+  {#each layout.sessions as placed (placed.session.id)}
+    {@const session = placed.session}
+    {@const status = sessionStatus(session)}
+    {@const times = sessionTimes(session)}
+    {@const about = sessionAbout(session, courses)}
+    {@const position = `grid-column: ${placed.column}; grid-row: ${placed.rowStart} / ${placed.rowEnd}; --lane: ${placed.lane}; --lanes: ${placed.lanes}`}
+    <div
+      class="blk session {status}"
+      style={position}
+      role="button"
+      tabindex="0"
+      onclick={() => onOpenSession(session)}
+      onkeydown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onOpenSession(session);
+        }
+      }}
+    >
+      <div class="blk-title">
+        <span class="name">
+          <svg class="icon lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
+          <span class="ellipsis">{t("session.untitled")}</span>
+        </span>
+        {#if status === "running"}
+          <span class="live-label">{t("session.live")}</span>
+        {:else if status === "done"}
+          <StatusIcon status="done" />
+        {:else if status === "stopped"}
+          <StatusIcon status="behind" label={t("session.status.stopped")} />
+        {:else if status === "missed"}
+          <span class="missed-label">{t("session.status.missed")}</span>
+        {:else}
+          <StatusIcon status="planned" />
+        {/if}
+      </div>
+      <span class="session-times" title={times}>{times}</span>
+      {#if about}<span title={about}>{about}</span>{/if}
+      {#if status === "running"}
+        <span>{t("live.left", { time: hoursText(live.secondsLeft + 59) })}</span>
+      {/if}
+    </div>
+  {/each}
+
   {#if todayColumn !== null && nowRow !== null}
     <div class="now" style:grid-column={todayColumn} style:grid-row={nowRow} aria-hidden="true"></div>
   {/if}
@@ -417,7 +474,9 @@
     outline-offset: -1px;
   }
 
+  /* Lines keep their height: a short block cuts off the last ones instead of squashing them. */
   .blk > span {
+    flex: none;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -507,6 +566,74 @@
     min-height: 28px;
     padding: 0 10px;
     font-size: var(--text-sm);
+  }
+
+  /* Study sessions: grey with a lock, no course tint (the course is in the text). */
+  .session {
+    background: var(--session-surface);
+  }
+
+  .session .lock {
+    color: var(--control);
+  }
+
+  .session.planned {
+    border: 1px solid var(--session-border);
+  }
+
+  .session.running {
+    background: var(--session-live-surface);
+  }
+
+  .session.running .session-times {
+    color: var(--text);
+  }
+
+  /* The running session pulses, as "study session active" does everywhere. */
+  .session.running::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius);
+    border: 1.5px solid var(--status-active);
+    animation: pulse 2s ease-in-out infinite;
+    pointer-events: none;
+  }
+
+  @keyframes pulse {
+    0%,
+    100% {
+      opacity: 0.25;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .session.running::after {
+      animation: none;
+      opacity: 0.7;
+    }
+  }
+
+  .live-label {
+    flex: none;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text);
+  }
+
+  /* Missed costs nothing: a quiet grey label, not a red one. */
+  .session.missed {
+    color: var(--text-faint);
+  }
+
+  .missed-label {
+    flex: none;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+    color: var(--text-muted);
   }
 
   .now {

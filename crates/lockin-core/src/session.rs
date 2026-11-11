@@ -138,7 +138,7 @@ pub async fn plan(
 ) -> Result<String> {
     check_times(start, end, now)?;
     if let Some(other) = overlapping(pool, start, end, None).await? {
-        bail!("this {}", overlap_message(&other));
+        bail!("This {}", overlap_message(&other));
     }
     let id = new_id();
     insert(pool, &id, None, course_id, clean_title(title), start, end).await?;
@@ -286,7 +286,7 @@ pub async fn update(
     check_editable(&get(pool, session_id).await?, now)?;
     check_times(start, end, now)?;
     if let Some(other) = overlapping(pool, start, end, Some(session_id)).await? {
-        bail!("this {}", overlap_message(&other));
+        bail!("This {}", overlap_message(&other));
     }
     sqlx::query(
         "UPDATE study_session
@@ -323,7 +323,7 @@ pub async fn restore(pool: &SqlitePool, session_id: &str, now: DateTime<Utc>) ->
     let start = parse_time(&session.start_at)?;
     let end = parse_time(&session.end_at)?;
     if let Some(other) = overlapping(pool, start, end, Some(session_id)).await? {
-        bail!("can't bring it back: it {}", overlap_message(&other));
+        bail!("Can't bring it back: it {}", overlap_message(&other));
     }
     sqlx::query("UPDATE study_session SET deleted = 0, updated_at = ? WHERE id = ?")
         .bind(now_text())

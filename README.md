@@ -11,8 +11,9 @@ study sessions that block distracting apps and websites.
 
 > **Status:** phases 1 to 3 of 6 are done: the TimeEdit import, the class tracking app
 > (week view, activities, templates, semester overview) and deadlines (by hand and from
-> Ufora, with the Urgent list) work. Study sessions and blocking come in phase 4. Built first for CachyOS with KDE Plasma, with Windows and macOS support
-> planned later.
+> Ufora, with the Urgent list) work. Phase 4 is under way: study sessions run, with the
+> daemon as a service; blocking apps and websites comes next. Built first for CachyOS with
+> KDE Plasma, with Windows and macOS support planned later.
 
 ## Features
 
@@ -39,14 +40,16 @@ study sessions that block distracting apps and websites.
 - **Filter rules** to ignore blocks you don't attend (e.g. "zelfstandig werk"), with a
   manual exception per block
 - **Dutch and English**, switchable without a restart; keyboard shortcuts throughout
-- **Background daemon** (systemd user service) that starts and ends planned study
-  sessions on time, also when the app is closed, and syncs the feeds every hour. Study
-  sessions are planned from the command line for now (once or every week)
+- **Study sessions:** plan them in the week view (N), once or every week until the end of
+  the semester. A background daemon (systemd user service) starts and ends them on time,
+  also when the app is closed, and syncs the feeds every hour. The Session page shows the
+  running session with its timer, break credit (5 min per 30 min studied, B takes a
+  break), its log and an emergency stop you hold open for two minutes
 
 **Planned**
 
-- **Study sessions** started by a background service, with app and website blocking,
-  break credit, tray icon and notifications (phase 4)
+- **Blocking** of apps and websites during study sessions, penalty points, tray icon and
+  notifications (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
@@ -87,6 +90,7 @@ app/
     lib/api.ts       typed wrappers around the Tauri commands
     lib/components/  week grid, panels, activity rows, …
     lib/week/        layout and status logic for the week and semester views
+    lib/session/     the running study session and the daemon's status (live.svelte.ts)
     lib/i18n/        translations (en.json, nl.json) and date formatting
     lib/styles/      design tokens (tokens.css) and shared styles
   src-tauri/         Tauri (Rust) side of the app: thin commands over lockin-core
@@ -126,6 +130,7 @@ when the app is closed. Install it as a systemd user service (Linux):
 ```bash
 tools/install-daemon.sh            # build, install to ~/.local/bin and start lockin.service
 journalctl --user -u lockin -f     # what it's doing
+lockin-daemon status               # is it running, and when did it last sync
 tools/install-daemon.sh --remove   # stop and remove it again (your data stays)
 ```
 

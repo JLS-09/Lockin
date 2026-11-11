@@ -6,6 +6,7 @@ pub mod db;
 pub mod deadline;
 pub mod filter;
 pub mod import;
+pub mod ipc;
 pub mod model;
 pub mod paths;
 pub mod session;

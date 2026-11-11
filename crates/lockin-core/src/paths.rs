@@ -23,6 +23,15 @@ pub fn data_dir() -> Result<PathBuf> {
     Ok(project_dirs()?.data_dir().to_path_buf())
 }
 
+/// $XDG_RUNTIME_DIR/lockin/ (e.g. /run/user/1000/lockin/), for the daemon's socket.
+/// None when the system has no runtime folder.
+pub fn runtime_dir() -> Option<PathBuf> {
+    project_dirs()
+        .ok()?
+        .runtime_dir()
+        .map(|folder| folder.to_path_buf())
+}
+
 /// ~/.local/share/lockin/lockin.db
 pub fn database_file() -> Result<PathBuf> {
     Ok(data_dir()?.join("lockin.db"))

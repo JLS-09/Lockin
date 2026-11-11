@@ -79,6 +79,15 @@ select {
   padding: 0;
 }
 
+/* The key on a button, e.g. "D" or "N". */
+.kbd {
+  font-size: var(--text-sm);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--kbd);
+  font-weight: var(--weight-bold);
+}
+
 /* Text only for screen readers. */
 .visually-hidden {
   position: absolute;

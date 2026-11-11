@@ -250,14 +250,6 @@
     color: var(--text-muted);
   }
 
-  .kbd {
-    font-size: var(--text-sm);
-    padding: 1px 6px;
-    border-radius: var(--radius-sm);
-    background: var(--kbd);
-    font-weight: var(--weight-bold);
-  }
-
   .error {
     color: var(--status-behind);
   }

@@ -139,6 +139,16 @@ pub async fn sync_due(pool: &Pool, now: DateTime<Utc>) -> Result<bool> {
     Ok(stale > 0)
 }
 
+/// When a feed was last fetched (the most recent one), RFC 3339 in UTC; None
+/// without feeds. For "synced 2 min ago" in the sidebar.
+pub async fn last_sync(pool: &Pool) -> Result<Option<String>> {
+    let last =
+        sqlx::query_scalar("SELECT MAX(last_fetched_at) FROM calendar_source WHERE deleted = 0")
+            .fetch_one(pool)
+            .await?;
+    Ok(last)
+}
+
 /// The saved feeds as the app shows them, without their URLs.
 pub async fn feeds(pool: &Pool) -> Result<Vec<FeedInfo>> {
     let classes = db::classes_per_source(pool).await?;

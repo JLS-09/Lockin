@@ -3,21 +3,31 @@
   // the schedule changes banner, the week grid, and beside it the panel of the
   // class you clicked, today's activities, the Urgent and Deadlines panels and
   // this week's other activities. Deadlines show as chips under the day headers; clicking
-  // one opens the same dialog as on the Urgent page. The study session button
-  // follows in phase 4.
+  // one opens the same dialog as on the Urgent page. Study sessions are blocks in
+  // the grid: the Study session button (N) plans one, clicking a planned one
+  // changes it, the running one opens the Session page.
   //
   // Keys: ← / → switch weeks, Home goes to this week, A adds an activity,
-  // Escape closes the class panel, Ctrl+Z brings back a deleted activity or deadline.
+  // N plans a study session, Escape closes the class panel, Ctrl+Z brings back
+  // a deleted activity, deadline or study session.
   import { goto } from "$app/navigation";
   import { page } from "$app/state";
   import { untrack } from "svelte";
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
-  import { api, isIgnored, type Activity, type ClassBlock, type Deadline } from "$lib/api";
+  import {
+    api,
+    isIgnored,
+    type Activity,
+    type ClassBlock,
+    type Deadline,
+    type StudySession,
+  } from "$lib/api";
   import BlockPanel from "$lib/components/BlockPanel.svelte";
   import ChangesBanner from "$lib/components/ChangesBanner.svelte";
   import DeadlineDialog from "$lib/components/DeadlineDialog.svelte";
+  import SessionDialog from "$lib/components/SessionDialog.svelte";
   import TodayPanel from "$lib/components/TodayPanel.svelte";
   import UrgentPanel from "$lib/components/UrgentPanel.svelte";
   import WeekGrid from "$lib/components/WeekGrid.svelte";
@@ -32,6 +42,9 @@
     tn,
   } from "$lib/i18n/index.svelte";
   import { measureFrames } from "$lib/perf";
+  import { sessionName } from "$lib/session/labels";
+  import { live } from "$lib/session/live.svelte";
+  import { isEditable, saveSession, type SessionFields } from "$lib/session/sessions";
   import { WeekData } from "$lib/week/data.svelte";
   import { layoutWeek, shownRange } from "$lib/week/layout";
 
@@ -51,6 +64,7 @@
   let blockPanel = $state<BlockPanel>();
   let weekPanel = $state<WeekPanel>();
   let deadlineDialog = $state<DeadlineDialog>();
+  let sessionDialog = $state<SessionDialog>();
 
   // "/?date=2026-10-26" opens that week (the semester overview links here like
   // that); "&block=<id>" also opens that class's panel (the Urgent list does).
@@ -73,7 +87,14 @@
   const layout = $derived.by(() => {
     if (!week) return null;
     const blocks = showIgnored ? week.blocks : week.blocks.filter((b) => !isIgnored(b));
-    return layoutWeek(parseIsoDate(week.monday), blocks);
+    return layoutWeek(parseIsoDate(week.monday), blocks, data.sessions);
+  });
+
+  // A session that starts or ends while the page is open: reload the sessions,
+  // so its block shows "Live", and afterwards "Done".
+  $effect(() => {
+    void live.current?.session.id; // runs again when the running session changes
+    untrack(() => data.loadSessions());
   });
 
   // Moved or cancelled blocks of this week you haven't dismissed yet.
@@ -204,6 +225,67 @@
     }
   }
 
+  /** The Study session button (N): a new session on today, or on the shown week's Monday. */
+  function planSession() {
+    const today = new Date();
+    const shownMonday = week ? parseIsoDate(week.monday) : today;
+    const inShownWeek = today >= shownMonday && today < addDays(shownMonday, 7);
+    sessionDialog?.openNew(inShownWeek ? today : shownMonday);
+  }
+
+  /** A click on a session: change a planned one, follow the running one. */
+  function openSession(session: StudySession) {
+    if (live.current?.session.id === session.id) goto("/session");
+    else if (isEditable(session, new Date())) sessionDialog?.openEdit(session);
+  }
+
+  async function saveFromDialog(id: string | null, fields: SessionFields): Promise<string | null> {
+    try {
+      const result = await saveSession(id, fields);
+      await data.loadSessions();
+      if (fields.weekly) {
+        const text =
+          result.overlapping > 0
+            ? `${tn("session.plannedWeekly", result.planned)} ${tn("session.leftOut", result.overlapping)}`
+            : tn("session.plannedWeekly", result.planned);
+        undoDelete = null;
+        showToast(text, t("session.seeAll"), () => goto("/session"));
+      }
+      return null;
+    } catch (e) {
+      return String(e);
+    }
+  }
+
+  async function removeSession(session: StudySession) {
+    try {
+      await api.removeSession(session.id);
+    } catch (e) {
+      data.error = String(e);
+      return;
+    }
+    await data.loadSessions();
+    offerUndo(sessionName(session, data.courseById), async () => {
+      try {
+        await api.restoreSession(session.id);
+      } catch (e) {
+        data.error = String(e);
+      }
+      data.loadSessions();
+    });
+  }
+
+  async function removeFollowing(session: StudySession) {
+    try {
+      const removed = await api.removeFollowingSessions(session.id);
+      undoDelete = null;
+      showToast(tn("session.removedFollowing", removed), t("session.seeAll"), () => goto("/session"));
+    } catch (e) {
+      data.error = String(e);
+    }
+    data.loadSessions();
+  }
+
   // From the class panel: one activity, or with "Every WPO" on, a template
   // that gives every WPO of the course this activity.
   async function addFromPanel(block: ClassBlock, title: string, repeat: boolean) {
@@ -220,7 +302,7 @@
   }
 
   function onKeydown(event: KeyboardEvent) {
-    if (deadlineDialog?.isOpen()) return; // the dialog has its own keys
+    if (deadlineDialog?.isOpen() || sessionDialog?.isOpen()) return; // dialogs have their own keys
     const typing = (event.target as HTMLElement).closest(
       "input, textarea, select, [contenteditable]",
     );
@@ -237,6 +319,7 @@
     if (event.key === "ArrowLeft") previousWeek();
     else if (event.key === "ArrowRight") nextWeek();
     else if (event.key === "Home") thisWeek();
+    else if (event.key === "n" || event.key === "N") planSession();
     else if (event.key === "a" || event.key === "A") {
       // Add to the open class, or else to this week's list.
       if (selected) blockPanel?.focusAdd();
@@ -311,6 +394,10 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6" /></svg>
       </button>
     </div>
+    <button class="btn btn-primary" onclick={planSession}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+      {t("week.newSession")} <span class="kbd">N</span>
+    </button>
   </header>
 
   {#if data.error}
@@ -344,6 +431,7 @@
               onSelect={select}
               onShowAnyway={(block) => data.showAnyway(block)}
               onOpenDeadline={openDeadline}
+              onOpenSession={openSession}
             />
           </div>
         {/key}
@@ -356,7 +444,7 @@
               <a class="btn btn-primary" href="/settings#schedule">{t("week.addSchedule")}</a>
             </div>
           </div>
-        {:else if week.blocks.length === 0}
+        {:else if week.blocks.length === 0 && data.sessions.length === 0}
           <p class="empty">{t("week.empty")}</p>
         {/if}
       {/if}
@@ -413,6 +501,14 @@
   courses={data.courses}
   onSave={(id, fields) => (id ? data.updateDeadline(id, fields) : Promise.resolve(false))}
   onDelete={removeDeadline}
+/>
+
+<SessionDialog
+  bind:this={sessionDialog}
+  courses={data.courses}
+  onSave={saveFromDialog}
+  onDelete={removeSession}
+  onDeleteFollowing={removeFollowing}
 />
 
 {#if toast}

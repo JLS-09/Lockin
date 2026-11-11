@@ -7,17 +7,24 @@
 //!   (`import::sync_all`), in the background so a slow download never holds
 //!   up a session.
 //!
+//! - answer the app on the socket (`lockin_core::ipc`): its status, and taking
+//!   a break, resuming or the emergency stop in the running session.
+//!
 //! Only one daemon runs at a time: it holds a lock on a file next to the database.
 //! Its messages go to the terminal, or to the journal under systemd
 //! (`journalctl --user -u lockin`).
 
 use std::fs::{File, TryLockError};
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Local, Utc};
+use lockin_core::ipc::{self, DaemonStatus, Request, Response};
 use lockin_core::model::TickResult;
-use lockin_core::{db, import, paths, session};
+use lockin_core::{db, import, now_text, paths, session};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::{UnixListener, UnixStream};
 use tokio::task::JoinHandle;
 use tokio::time::MissedTickBehavior;
 
@@ -34,6 +41,10 @@ pub async fn run(pool: db::Pool) -> Result<()> {
         "lockin-daemon running, database {}",
         paths::database_file()?.display()
     ));
+
+    let started_at = now_text();
+    let socket = ipc::socket_path()?;
+    let listener = listen(&socket)?;
 
     let mut ticker = tokio::time::interval(Duration::from_secs(TICK_SECONDS));
     // After a suspend, tick once and carry on; don't catch up on every missed tick.
@@ -62,6 +73,12 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                     syncing = Some(tokio::spawn(sync(pool.clone())));
                 }
             }
+            accepted = listener.accept() => {
+                if let Ok((stream, _)) = accepted {
+                    // Each connection gets its own task, so a slow client never holds up the loop.
+                    tokio::spawn(answer_connection(stream, pool.clone(), started_at.clone()));
+                }
+            }
             _ = &mut stop => {
                 say("stopping");
                 if let Some(task) = syncing {
@@ -71,8 +88,102 @@ pub async fn run(pool: db::Pool) -> Result<()> {
             }
         }
     }
+    let _ = std::fs::remove_file(&socket);
     pool.close().await;
     Ok(())
+}
+
+/// Open the socket the app talks to. A file left by a daemon that crashed is
+/// removed first: we hold the lock, so no other daemon uses it.
+fn listen(socket: &Path) -> Result<UnixListener> {
+    if let Some(folder) = socket.parent() {
+        std::fs::create_dir_all(folder)?;
+    }
+    let _ = std::fs::remove_file(socket);
+    let listener = UnixListener::bind(socket)?;
+    // Only you may connect (the runtime folder is private already).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(listener)
+}
+
+/// One connection: read one request line, write one response line.
+async fn answer_connection(stream: UnixStream, pool: db::Pool, started_at: String) {
+    let (reader, mut writer) = stream.into_split();
+    let mut line = String::new();
+    // A request is one short line; more than 4 KB isn't one of ours.
+    let mut reader = BufReader::new(reader).take(4096);
+    if reader.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let response = match serde_json::from_str::<Request>(&line) {
+        Ok(request) => answer(&pool, &started_at, request, Utc::now()).await,
+        Err(_) => Response::failed("unknown request"),
+    };
+    if let Ok(mut text) = serde_json::to_string(&response) {
+        text.push('\n');
+        let _ = writer.write_all(text.as_bytes()).await;
+    }
+}
+
+/// What the daemon answers to a request, at `now`.
+async fn answer(
+    pool: &db::Pool,
+    started_at: &str,
+    request: Request,
+    now: DateTime<Utc>,
+) -> Response {
+    let result = match request {
+        Request::Status => {
+            return match import::last_sync(pool).await {
+                Ok(last_sync_at) => Response {
+                    status: Some(DaemonStatus {
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        started_at: started_at.to_string(),
+                        last_sync_at,
+                    }),
+                    ..Response::done()
+                },
+                Err(error) => Response::failed(error),
+            };
+        }
+        Request::TakeBreak => match running(pool).await {
+            Ok(id) => session::take_break(pool, &id, now)
+                .await
+                .map(|_| "break started"),
+            Err(error) => Err(error),
+        },
+        Request::Resume => match running(pool).await {
+            Ok(id) => session::resume(pool, &id, now, None)
+                .await
+                .map(|_| "break ended"),
+            Err(error) => Err(error),
+        },
+        Request::EmergencyStop => match running(pool).await {
+            Ok(id) => session::emergency_stop(pool, &id, now)
+                .await
+                .map(|_| "stopped with the emergency button"),
+            Err(error) => Err(error),
+        },
+    };
+    match result {
+        Ok(what) => {
+            say(&format!("study session: {what} (from the app)"));
+            Response::done()
+        }
+        Err(error) => Response::failed(error),
+    }
+}
+
+/// The id of the running session, or an error that says there is none.
+async fn running(pool: &db::Pool) -> Result<String> {
+    match session::running(pool).await? {
+        Some(running) => Ok(running.id),
+        None => bail!("no study session is running"),
+    }
 }
 
 /// Take the lock on ~/.local/share/lockin/daemon.lock, or fail when another
@@ -203,4 +314,76 @@ fn session_times(start: &str, end: &str) -> String {
 /// doesn't, so every line starts with the time.
 fn say(message: &str) {
     println!("{} {message}", Local::now().format("%H:%M:%S"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lockin_core::ipc;
+
+    /// A daemon's socket on a test database, answering until the test ends.
+    async fn test_daemon() -> (db::Pool, std::path::PathBuf) {
+        let pool = db::open_in_memory().await.unwrap();
+        let path = std::env::temp_dir().join(format!("lockin-{}.sock", lockin_core::new_id()));
+        let listener = listen(&path).unwrap();
+        let serving = pool.clone();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                tokio::spawn(answer_connection(
+                    stream,
+                    serving.clone(),
+                    "2099-11-04T12:00:00Z".into(),
+                ));
+            }
+        });
+        (pool, path)
+    }
+
+    #[tokio::test]
+    async fn status_over_the_socket() {
+        let (_pool, path) = test_daemon().await;
+        let response = ipc::send_to(&path, &Request::Status).await.unwrap();
+        let status = response.status.unwrap();
+        assert_eq!(status.started_at, "2099-11-04T12:00:00Z");
+        assert_eq!(status.last_sync_at, None);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn breaks_over_the_socket() {
+        let (pool, path) = test_daemon().await;
+        // Nothing running: a clear error comes back.
+        let error = ipc::send_to(&path, &Request::TakeBreak).await.unwrap_err();
+        assert_eq!(error.to_string(), "no study session is running");
+
+        // A session that started 40 minutes ago has 5 minutes of credit.
+        let now = Utc::now();
+        let id = session::plan(
+            &pool,
+            None,
+            None,
+            now + chrono::Duration::minutes(1),
+            now + chrono::Duration::hours(2),
+            now,
+        )
+        .await
+        .unwrap();
+        session::start(&pool, &id, now - chrono::Duration::minutes(40), None)
+            .await
+            .unwrap();
+
+        ipc::send_to(&path, &Request::TakeBreak).await.unwrap();
+        let item = session::get(&pool, &id).await.unwrap();
+        assert_eq!(
+            session::state_now(&pool, &item, Utc::now())
+                .await
+                .unwrap()
+                .phase,
+            "break"
+        );
+        ipc::send_to(&path, &Request::Resume).await.unwrap();
+        ipc::send_to(&path, &Request::EmergencyStop).await.unwrap();
+        assert_eq!(session::get(&pool, &id).await.unwrap().status, "stopped");
+        let _ = std::fs::remove_file(path);
+    }
 }

@@ -14,19 +14,23 @@ import {
   type Course,
   type Deadline,
   type FilterRule,
+  type StudySession,
   type UrgentItem,
   type Week,
 } from "$lib/api";
+import { sessionsOfWeek } from "$lib/session/sessions";
 import type { DeadlineFields } from "$lib/urgent/data.svelte";
 import { SvelteSet } from "svelte/reactivity";
 
-import { isoDate } from "$lib/i18n/index.svelte";
+import { addDays, isoDate } from "$lib/i18n/index.svelte";
 
 export class WeekData {
   /** Any day in the shown week. */
   date = $state(new Date());
   /** The shown week. */
   week = $state<Week | null>(null);
+  /** The study sessions of the shown week. */
+  sessions = $state<StudySession[]>([]);
   /** The week with today in it, for the Today panel. */
   todayWeek = $state<Week | null>(null);
   courses = $state<Course[]>([]);
@@ -59,12 +63,28 @@ export class WeekData {
   async loadWeek() {
     const request = ++this.#latest;
     try {
-      const week = await api.week(isoDate(this.date));
+      const monday = addDays(this.date, -((this.date.getDay() + 6) % 7));
+      const [week, sessions] = await Promise.all([
+        api.week(isoDate(this.date)),
+        sessionsOfWeek(monday),
+      ]);
       if (request !== this.#latest) return;
       this.week = week;
+      this.sessions = sessions;
       this.error = null;
     } catch (e) {
       if (request === this.#latest) this.error = String(e);
+    }
+  }
+
+  /** Only the sessions, after planning or changing one, or when one starts or ends. */
+  async loadSessions() {
+    if (!this.week) return;
+    try {
+      const [year, month, day] = this.week.monday.split("-").map(Number);
+      this.sessions = await sessionsOfWeek(new Date(year, month - 1, day));
+    } catch (e) {
+      this.error = String(e);
     }
   }
 
@@ -87,13 +107,14 @@ export class WeekData {
 
   /**
    * Sync the feeds when the last sync is over an hour old, then reload what
-   * changed. Until the daemon does this hourly (phase 4), opening the app does.
-   * A failed sync (offline, say) is quiet here; Settings shows the error.
+   * changed. Only when the daemon isn't running: otherwise it syncs every hour
+   * itself. A failed sync (offline, say) is quiet here; Settings shows the error.
    */
   async syncIfStale() {
     try {
       const feeds = await api.feeds();
       this.hasSchedule = feeds.length > 0;
+      if (await api.daemonStatus().catch(() => null)) return;
       const hourAgo = Date.now() - 60 * 60 * 1000;
       const stale = feeds.some(
         (f) => !f.lastFetchedAt || new Date(f.lastFetchedAt).getTime() < hourAgo,
