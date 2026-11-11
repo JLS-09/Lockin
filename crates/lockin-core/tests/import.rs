@@ -147,3 +147,47 @@ async fn blocks_are_linked_to_their_course() {
     assert_eq!(all[0].kind.as_deref(), Some("hoorcollege"));
     assert_eq!(all[1].kind.as_deref(), Some("werkcollege"));
 }
+
+#[tokio::test]
+async fn moved_block_remembers_its_first_time_until_seen() {
+    let pool = db::open_in_memory().await.unwrap();
+    let source = db::add_timeedit_source(&pool, "https://example.test/feed.ics")
+        .await
+        .unwrap();
+    let mut events = timeedit::parse(SAMPLE).unwrap();
+    db::save_feed(&pool, &source, &events).await.unwrap();
+    let original = "2099-11-09T17:00:00Z";
+
+    let block = |all: Vec<lockin_core::model::ClassBlock>| {
+        all.into_iter()
+            .find(|b| b.title == "E702010A. Signalen en systemen, hoorcollege")
+            .unwrap()
+    };
+    let all = || {
+        db::blocks_between(
+            &pool,
+            Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap(),
+            Utc.with_ymd_and_hms(2100, 1, 1, 0, 0, 0).unwrap(),
+        )
+    };
+
+    // Moved once: remembers where it was.
+    events[0].start += chrono::Duration::hours(1);
+    events[0].end += chrono::Duration::hours(1);
+    db::save_feed(&pool, &source, &events).await.unwrap();
+    let moved = block(all().await.unwrap());
+    assert_eq!(moved.moved_from.as_deref(), Some(original));
+    assert!(!moved.change_seen);
+
+    // "Got it", then moved again: still the first time, and shown again.
+    db::acknowledge_changes(&pool, std::slice::from_ref(&moved.id))
+        .await
+        .unwrap();
+    assert!(block(all().await.unwrap()).change_seen);
+    events[0].start += chrono::Duration::hours(1);
+    events[0].end += chrono::Duration::hours(1);
+    db::save_feed(&pool, &source, &events).await.unwrap();
+    let moved = block(all().await.unwrap());
+    assert_eq!(moved.moved_from.as_deref(), Some(original));
+    assert!(!moved.change_seen);
+}

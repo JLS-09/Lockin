@@ -16,11 +16,20 @@
   --surface-active: #2a2e36;
   --border: #262a33;
   --border-strong: #2f3440;
+  --border-dashed: #3a404c; /* ignored blocks */
+  --grid-line: #252932; /* hour lines in the week grid */
+  --today-column: rgb(255 255 255 / 0.03);
+  --pill: #2b2f38; /* "Today" pill */
+  --tag: #2f333b; /* "Moved · was …" tag */
+  --cancelled-surface: #1c1f26;
 
   /* Text. All of them reach at least 4.5:1 on --bg (WCAG AA). */
   --text: #e4e6eb;
   --text-muted: #aab1bd;
   --text-faint: #7a8699;
+  --text-done: #9aa1ad; /* a checked-off activity */
+  --text-ignored: #8d96a6;
+  --text-cancelled: #ef8a8a;
 
   /* Controls: no accent hue, only greys, so themes bring the color. */
   --control: #d4d7dd;
@@ -35,17 +44,20 @@
   --status-planned: #7a8699;
   --status-active: #d4d7dd;
 
-  /* How much of a course color tints a class block's background. */
-  --course-tint: 22%;
+  /* How much of a course color tints a class block's background (mixed into --bg). */
+  --course-tint: 18%;
 
-  /* Type: one typeface in three sizes. */
+  /* Type: Inter, in the sizes the mockups use. */
   --font: "Inter Variable", system-ui, sans-serif;
-  --text-sm: 12px;
-  --text-md: 14px;
-  --text-lg: 22px;
+  --text-sm: 12px; /* secondary lines, tags, hints */
+  --text-base: 13px; /* block titles, day headers */
+  --text-md: 14px; /* body text, buttons, navigation */
+  --text-title: 15px; /* panel headings */
+  --text-lg: 22px; /* page title */
   --weight-normal: 400;
   --weight-medium: 500;
   --weight-bold: 600;
+  --weight-heavy: 700;
 
   /* Spacing and corners. */
   --space-1: 4px;
@@ -56,6 +68,7 @@
   --space-6: 32px;
   --radius-sm: 4px;
   --radius: 8px;
+  --radius-md: 10px; /* banners, cards in the sidebar */
   --radius-lg: 12px;
 
   /* Motion: smooth but fast. Only animate transform and opacity. */

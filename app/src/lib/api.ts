@@ -29,6 +29,18 @@ export interface ClassBlock {
   /** null = the rules decide; true/false = manual exception. */
   ignoredOverride: boolean | null;
   status: BlockStatus;
+  /** Start time before its first move, for "Moved · was Fri 13:00". */
+  movedFrom: string | null;
+  /** True once the change was dismissed with "Got it". */
+  changeSeen: boolean;
+}
+
+export interface FilterRule {
+  id: string;
+  /** "title", "location" or "description" */
+  field: string;
+  /** Case-insensitive "contains". */
+  pattern: string;
 }
 
 /** A manual exception wins; otherwise the filter rules decide. */
@@ -74,6 +86,7 @@ export const api = {
   week: (date: string) => invoke<Week>("week", { date }),
   templates: () => invoke<ActivityTemplate[]>("templates"),
   progress: () => invoke<WeekProgress[]>("progress"),
+  rules: () => invoke<FilterRule[]>("rules"),
 
   addBlockActivity: (blockId: string, title: string) =>
     invoke<string>("add_block_activity", { blockId, title }),
@@ -91,4 +104,5 @@ export const api = {
 
   setBlockIgnored: (blockId: string, ignored: boolean | null) =>
     invoke<void>("set_block_ignored", { blockId, ignored }),
+  acknowledgeChanges: (blockIds: string[]) => invoke<void>("acknowledge_changes", { blockIds }),
 };

@@ -14,8 +14,8 @@
       {
         "label": "main",
         "title": "Lockin",
-        "width": 1200,
-        "height": 800,
+        "width": 1440,
+        "height": 920,
         "minWidth": 900,
         "minHeight": 600,
         "backgroundColor": "#15171c"

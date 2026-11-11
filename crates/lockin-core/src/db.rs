@@ -381,6 +381,19 @@ pub async fn save_feed(
                     .bind(&event.uid)
                     .execute(&mut *transaction)
                     .await?;
+
+                // Remember where it was before its first move, and show the change again.
+                if moved {
+                    sqlx::query(
+                        "UPDATE class_block
+                         SET moved_from = COALESCE(moved_from, ?), change_seen = 0
+                         WHERE ical_uid = ?",
+                    )
+                    .bind(&old_start)
+                    .bind(&event.uid)
+                    .execute(&mut *transaction)
+                    .await?;
+                }
                 result.updated += 1;
             }
         }
@@ -398,7 +411,8 @@ pub async fn save_feed(
         let still_in_feed = events.iter().any(|e| e.uid == uid);
         if !still_in_feed {
             sqlx::query(
-                "UPDATE class_block SET status = 'cancelled', updated_at = ? WHERE ical_uid = ?",
+                "UPDATE class_block SET status = 'cancelled', change_seen = 0, updated_at = ?
+                 WHERE ical_uid = ?",
             )
             .bind(&now)
             .bind(&uid)
@@ -505,7 +519,7 @@ pub async fn blocks_between(
 ) -> Result<Vec<ClassBlock>> {
     let blocks = sqlx::query_as(
         "SELECT id, ical_uid, course_id, kind, title, location, start_at, end_at,
-                ignored_by_rule, ignored_override, status
+                ignored_by_rule, ignored_override, status, moved_from, change_seen
          FROM class_block
          WHERE deleted = 0 AND start_at >= ? AND start_at < ?
          ORDER BY start_at",
@@ -515,4 +529,18 @@ pub async fn blocks_between(
     .fetch_all(pool)
     .await?;
     Ok(blocks)
+}
+
+/// Mark the changes of these blocks (moved, cancelled) as seen: "Got it" in the week view.
+pub async fn acknowledge_changes(pool: &SqlitePool, block_ids: &[String]) -> Result<()> {
+    let mut transaction = pool.begin().await?;
+    for id in block_ids {
+        sqlx::query("UPDATE class_block SET change_seen = 1, updated_at = ? WHERE id = ?")
+            .bind(now_text())
+            .bind(id)
+            .execute(&mut *transaction)
+            .await?;
+    }
+    transaction.commit().await?;
+    Ok(())
 }

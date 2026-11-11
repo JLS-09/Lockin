@@ -32,6 +32,6 @@
   main {
     min-width: 0;
     overflow-y: auto;
-    padding: var(--space-5) var(--space-6);
+    padding: var(--space-5) 28px;
   }
 </style>

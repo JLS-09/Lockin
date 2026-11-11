@@ -29,6 +29,10 @@ pub struct ClassBlock {
     pub ignored_by_rule: bool,
     pub ignored_override: Option<bool>,
     pub status: String,
+    /// Start time before the block was first moved, for "Moved · was Fri 13:00".
+    pub moved_from: Option<String>,
+    /// True once you've dismissed this change in the week view.
+    pub change_seen: bool,
 }
 
 impl ClassBlock {
@@ -39,7 +43,8 @@ impl ClassBlock {
 }
 
 /// A rule like "ignore everything with 'zelfstandig werk' in the title".
-#[derive(Debug, Clone, sqlx::FromRow)]
+#[derive(Debug, Clone, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FilterRule {
     pub id: String,
     pub field: String,

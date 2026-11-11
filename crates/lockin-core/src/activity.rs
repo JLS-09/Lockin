@@ -8,11 +8,11 @@ use sqlx::sqlite::SqlitePool;
 use crate::model::{Activity, ActivityTemplate, WeekProgress};
 use crate::{new_id, now_text};
 
-/// Default course colors: muted, readable on the dark background,
-/// and away from the green, red and orange of the status colors.
-/// The same list is in migration 0003.
+/// Default course colors: the first four come from the UI mockups, the others
+/// are picked in the same style, away from the orange and red status colors.
+/// The same list is in migration 0004.
 pub const COURSE_COLORS: [&str; 8] = [
-    "#6b9bd1", "#a685d6", "#d47fae", "#4fb3bf", "#c8b45a", "#8b93e8", "#c98b6b", "#7fa88f",
+    "#3987e5", "#9085e9", "#d55181", "#199e70", "#2aa5b8", "#c56cc8", "#9aa43c", "#6b8fb3",
 ];
 
 /// The color for a new course: the next one in the palette.

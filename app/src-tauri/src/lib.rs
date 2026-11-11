@@ -9,7 +9,9 @@
 //! `block_id` here is `blockId` in `invoke`.
 
 use chrono::NaiveDate;
-use lockin_core::model::{Activity, ActivityTemplate, ClassBlock, Course, WeekProgress};
+use lockin_core::model::{
+    Activity, ActivityTemplate, ClassBlock, Course, FilterRule, WeekProgress,
+};
 use lockin_core::{activity, db, paths};
 use serde::Serialize;
 use tauri::{Manager, State};
@@ -147,7 +149,24 @@ async fn remove_template(pool: State<'_, db::Pool>, template_id: String) -> Comm
         .map_err(message)
 }
 
+/// The filter rules, to say which rule ignores a block.
+#[tauri::command]
+async fn rules(pool: State<'_, db::Pool>) -> CommandResult<Vec<FilterRule>> {
+    db::filter_rules(&pool).await.map_err(message)
+}
+
 // ---------- Blocks ----------
+
+/// "Got it" on the schedule changes banner.
+#[tauri::command]
+async fn acknowledge_changes(
+    pool: State<'_, db::Pool>,
+    block_ids: Vec<String>,
+) -> CommandResult<()> {
+    db::acknowledge_changes(&pool, &block_ids)
+        .await
+        .map_err(message)
+}
 
 /// The manual exception for one block: true = always ignore,
 /// false = never ignore, null = let the rules decide again.
@@ -185,6 +204,7 @@ pub fn run() {
             week,
             templates,
             progress,
+            rules,
             add_block_activity,
             add_week_activity,
             set_activity_done,
@@ -193,6 +213,7 @@ pub fn run() {
             add_template,
             remove_template,
             set_block_ignored,
+            acknowledge_changes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Lockin app");
