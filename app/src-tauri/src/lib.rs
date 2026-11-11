@@ -126,6 +126,14 @@ async fn remove_activity(pool: State<'_, db::Pool>, activity_id: String) -> Comm
     activity::remove(&pool, &activity_id).await.map_err(message)
 }
 
+/// Undo a removal.
+#[tauri::command]
+async fn restore_activity(pool: State<'_, db::Pool>, activity_id: String) -> CommandResult<()> {
+    activity::restore(&pool, &activity_id)
+        .await
+        .map_err(message)
+}
+
 // ---------- Templates ----------
 
 /// `kind` None = every block of the course. Returns how many activities it made.
@@ -210,6 +218,7 @@ pub fn run() {
             set_activity_done,
             rename_activity,
             remove_activity,
+            restore_activity,
             add_template,
             remove_template,
             set_block_ignored,

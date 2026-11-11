@@ -239,11 +239,21 @@ pub async fn remove(pool: &SqlitePool, activity_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// All visible activities in the week of `date`.
+/// Undo `remove`: the activity comes back as it was.
+pub async fn restore(pool: &SqlitePool, activity_id: &str) -> Result<()> {
+    sqlx::query("UPDATE activity SET deleted = 0, updated_at = ? WHERE id = ?")
+        .bind(now_text())
+        .bind(activity_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// All visible activities in the week of `date`, in the order they were added.
 pub async fn in_week(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<Activity>> {
     let activities = sqlx::query_as(
         "SELECT id, block_id, template_id, course_id, title, week, done, done_at
-         FROM activity_with_week WHERE week = ? ORDER BY title",
+         FROM activity_with_week WHERE week = ? ORDER BY created_order",
     )
     .bind(week_of(date))
     .fetch_all(pool)

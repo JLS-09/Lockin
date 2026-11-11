@@ -1,40 +1,39 @@
 <script lang="ts">
   // The week page, following the week view mockup: header with week switching,
-  // the schedule changes banner, the week grid and today's activities beside it.
+  // the schedule changes banner, the week grid, and beside it the panel of the
+  // class you clicked, today's activities and this week's other activities.
   // The Urgent panel and the study session button follow in phases 3 and 4.
+  //
+  // Keys: ← / → switch weeks, Home goes to this week, A adds an activity,
+  // Escape closes the class panel, Ctrl+Z brings back a deleted activity.
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
-  import {
-    api,
-    isIgnored,
-    type Activity,
-    type ClassBlock,
-    type Course,
-    type FilterRule,
-    type Week,
-  } from "$lib/api";
+  import { isIgnored, type Activity, type ClassBlock } from "$lib/api";
+  import BlockPanel from "$lib/components/BlockPanel.svelte";
   import ChangesBanner from "$lib/components/ChangesBanner.svelte";
   import TodayPanel from "$lib/components/TodayPanel.svelte";
   import WeekGrid from "$lib/components/WeekGrid.svelte";
+  import WeekPanel from "$lib/components/WeekPanel.svelte";
   import { addDays, formatRange, isoDate, isoWeek, parseIsoDate, t } from "$lib/i18n/index.svelte";
   import { measureFrames } from "$lib/perf";
+  import { WeekData } from "$lib/week/data.svelte";
   import { layoutWeek, shownRange } from "$lib/week/layout";
 
-  // Any day in the shown week; starts at today.
-  let date = $state(new Date());
-  let week = $state<Week | null>(null);
-  // The week with today in it, for the Today panel, whichever week is shown.
-  let todayWeek = $state<Week | null>(null);
-  let courses = $state<Course[]>([]);
-  let rules = $state<FilterRule[]>([]);
-  let error = $state<string | null>(null);
+  const data = new WeekData();
   let now = $state(new Date());
   // -1 = the new week slides in from the left, 1 = from the right.
   let direction = $state(0);
   let showIgnored = $state(loadShowIgnored());
+  let selectedId = $state<string | null>(null);
+  // The last deleted activity, for the Undo toast.
+  let deleted = $state<Activity | null>(null);
+  let undoTimer: ReturnType<typeof setTimeout> | undefined;
 
-  const courseById = $derived(new Map(courses.map((c) => [c.id, c])));
+  let blockPanel = $state<BlockPanel>();
+  let weekPanel = $state<WeekPanel>();
+
+  const week = $derived(data.week);
   const ignoredCount = $derived(week?.blocks.filter(isIgnored).length ?? 0);
   const layout = $derived.by(() => {
     if (!week) return null;
@@ -47,8 +46,18 @@
     week?.blocks.filter((b) => b.status !== "normal" && !b.changeSeen && !isIgnored(b)) ?? [],
   );
 
+  // The open class: only while it's in the shown week.
+  const selected = $derived(week?.blocks.find((b) => b.id === selectedId) ?? null);
+  const selectedActivities = $derived(
+    selected ? (week?.activities.filter((a) => a.blockId === selected.id) ?? []) : [],
+  );
+
+  // Activities of the shown week that aren't tied to a class.
+  const weekActivities = $derived(week?.activities.filter((a) => a.blockId === null) ?? []);
+
   // Today's activities: the ones on today's classes, in the order of the classes.
   const todayActivities = $derived.by(() => {
+    const todayWeek = data.todayWeek;
     if (!todayWeek) return [];
     const today = isoDate(now);
     const order = new Map(
@@ -61,120 +70,82 @@
       .sort((a, b) => order.get(a.blockId!)! - order.get(b.blockId!)!);
   });
 
-  Promise.all([api.courses(), api.rules()])
-    .then(([courseList, ruleList]) => {
-      courses = courseList;
-      rules = ruleList;
-    })
-    .catch((e) => (error = String(e)));
+  data.loadCoursesAndRules();
+  data.loadToday();
 
-  // Reload whenever the date changes. A slow answer for an older week is dropped.
-  // The old week stays on screen until the new one is there, so nothing flashes.
-  let latest = 0;
-  async function loadWeek() {
-    const request = ++latest;
-    try {
-      const result = await api.week(isoDate(date));
-      if (request !== latest) return;
-      week = result;
-      error = null;
-      if (import.meta.env.DEV && direction !== 0) measureFrames("week switch");
-    } catch (e) {
-      if (request === latest) error = String(e);
-    }
-  }
-
-  async function loadToday() {
-    try {
-      todayWeek = await api.week(isoDate(new Date()));
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
+  // Reload whenever the date changes. The old week stays on screen until the
+  // new one is there, so nothing flashes.
   $effect(() => {
-    isoDate(date); // reload when the date changes
-    loadWeek();
+    isoDate(data.date); // reload when the date changes
+    data.loadWeek().then(() => {
+      if (import.meta.env.DEV && direction !== 0) measureFrames("week switch");
+    });
   });
-  loadToday();
 
   // Keep "now" fresh for the today column, the now line and the statuses.
   $effect(() => {
     const timer = setInterval(() => {
       const previous = isoDate(now);
       now = new Date();
-      if (isoDate(now) !== previous) loadToday(); // past midnight: a new today
+      if (isoDate(now) !== previous) data.loadToday(); // past midnight: a new today
     }, 60_000);
     return () => clearInterval(timer);
   });
 
-  function goTo(newDate: Date, newDirection: number) {
+  function goTo(date: Date, newDirection: number) {
     direction = newDirection;
-    date = newDate;
+    data.date = date;
   }
 
-  const previousWeek = () => goTo(addDays(date, -7), -1);
-  const nextWeek = () => goTo(addDays(date, 7), 1);
+  const previousWeek = () => goTo(addDays(data.date, -7), -1);
+  const nextWeek = () => goTo(addDays(data.date, 7), 1);
   const thisWeek = () => {
     const today = new Date();
-    goTo(today, Math.sign(today.getTime() - date.getTime()));
+    goTo(today, Math.sign(today.getTime() - data.date.getTime()));
   };
 
-  // ← and → switch weeks, Home jumps to this week. Not while typing.
+  function select(block: ClassBlock) {
+    selectedId = selectedId === block.id ? null : block.id;
+  }
+
+  async function remove(activity: Activity) {
+    if (!(await data.remove(activity))) return;
+    // Offer "Undo" for a few seconds.
+    deleted = activity;
+    clearTimeout(undoTimer);
+    undoTimer = setTimeout(() => (deleted = null), 6000);
+  }
+
+  function undo() {
+    if (!deleted) return;
+    data.restore(deleted);
+    deleted = null;
+    clearTimeout(undoTimer);
+  }
+
   function onKeydown(event: KeyboardEvent) {
-    const target = event.target as HTMLElement;
-    if (target.closest("input, textarea, select, [contenteditable]")) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const typing = (event.target as HTMLElement).closest(
+      "input, textarea, select, [contenteditable]",
+    );
+    if (event.key === "Escape" && selectedId && !typing) {
+      selectedId = null;
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key === "z" && deleted && !typing) {
+      event.preventDefault();
+      undo();
+      return;
+    }
+    if (typing || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.key === "ArrowLeft") previousWeek();
     else if (event.key === "ArrowRight") nextWeek();
     else if (event.key === "Home") thisWeek();
-    else return;
+    else if (event.key === "a" || event.key === "A") {
+      // Add to the open class, or else to this week's list.
+      if (selected) blockPanel?.focusAdd();
+      else weekPanel?.focusAdd();
+    } else return;
     event.preventDefault();
-  }
-
-  /**
-   * Check an activity off or on. The UI changes at once; saving happens after.
-   * If saving fails, it flips back and the error shows.
-   */
-  async function toggle(activity: Activity) {
-    const done = !activity.done;
-    setDone(activity.id, done);
-    try {
-      await api.setActivityDone(activity.id, done);
-    } catch (e) {
-      setDone(activity.id, !done);
-      error = String(e);
-    }
-  }
-
-  function setDone(id: string, done: boolean) {
-    const update = (list: Activity[]) => list.map((a) => (a.id === id ? { ...a, done } : a));
-    if (week) week = { ...week, activities: update(week.activities) };
-    if (todayWeek) todayWeek = { ...todayWeek, activities: update(todayWeek.activities) };
-  }
-
-  async function dismissChanges() {
-    const ids = changes.map((b) => b.id);
-    const mark = (w: Week) => ({
-      ...w,
-      blocks: w.blocks.map((b) => (ids.includes(b.id) ? { ...b, changeSeen: true } : b)),
-    });
-    if (week) week = mark(week);
-    try {
-      await api.acknowledgeChanges(ids);
-    } catch (e) {
-      error = String(e);
-    }
-  }
-
-  // "Show anyway": a manual exception that keeps this block, whatever the rules say.
-  async function showAnyway(block: ClassBlock) {
-    try {
-      await api.setBlockIgnored(block.id, false);
-      await Promise.all([loadWeek(), loadToday()]);
-    } catch (e) {
-      error = String(e);
-    }
   }
 
   function loadShowIgnored(): boolean {
@@ -198,12 +169,22 @@
   // The old week disappears at once, so you can keep clicking without waiting.
   // With "reduce motion" on, it only fades. Durations come from tokens.css.
   function weekIn(node: Element) {
-    const style = getComputedStyle(document.documentElement);
-    const duration = parseFloat(style.getPropertyValue("--duration-panel")) || 200;
+    const duration = cssDuration("--duration-panel", 200);
     if (matchMedia("(prefers-reduced-motion: reduce)").matches || direction === 0) {
       return fade(node, { duration });
     }
     return fly(node, { x: direction * 32, duration, easing: cubicOut });
+  }
+
+  // Panels and the toast fade and rise in a little; nothing waits for them.
+  function panelIn(node: Element) {
+    const duration = cssDuration("--duration-panel", 200);
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return fade(node, { duration });
+    return fly(node, { y: 8, duration, easing: cubicOut });
+  }
+
+  function cssDuration(name: string, fallback: number): number {
+    return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) || fallback;
   }
 </script>
 
@@ -212,7 +193,7 @@
 <div class="page">
   <header>
     <div class="title">
-      <h1>{t("week.title", { number: isoWeek(date) })}</h1>
+      <h1>{t("week.title", { number: isoWeek(data.date) })}</h1>
       {#if layout}
         {@const [first, last] = shownRange(layout)}
         <span class="range">{formatRange(first, last)}</span>
@@ -234,12 +215,17 @@
     </div>
   </header>
 
-  {#if error}
-    <p class="error" role="alert">{t("week.loadFailed", { error })}</p>
+  {#if data.error}
+    <p class="error" role="alert">{t("week.loadFailed", { error: data.error })}</p>
   {/if}
 
   {#if changes.length > 0 && week}
-    <ChangesBanner blocks={changes} activities={week.activities} courses={courseById} onDismiss={dismissChanges} />
+    <ChangesBanner
+      blocks={changes}
+      activities={week.activities}
+      courses={data.courseById}
+      onDismiss={() => data.acknowledgeChanges(changes)}
+    />
   {/if}
 
   <div class="content">
@@ -252,10 +238,12 @@
             <WeekGrid
               {layout}
               activities={week.activities}
-              courses={courseById}
-              {rules}
+              courses={data.courseById}
+              rules={data.rules}
               {now}
-              onShowAnyway={showAnyway}
+              {selectedId}
+              onSelect={select}
+              onShowAnyway={(block) => data.showAnyway(block)}
             />
           </div>
         {/key}
@@ -267,10 +255,45 @@
     </section>
 
     <aside>
-      <TodayPanel day={now} activities={todayActivities} courses={courseById} onToggle={toggle} />
+      {#if selected}
+        {#key selected.id}
+          <div in:panelIn>
+            <BlockPanel
+              bind:this={blockPanel}
+              block={selected}
+              course={selected.courseId ? data.courseById.get(selected.courseId) : undefined}
+              activities={selectedActivities}
+              onToggle={(a) => data.toggle(a)}
+              onRename={(a, title) => data.rename(a, title)}
+              onRemove={remove}
+              onAdd={(title) => data.addToBlock(selected, title)}
+              onClose={() => (selectedId = null)}
+            />
+          </div>
+        {/key}
+      {/if}
+      <TodayPanel day={now} activities={todayActivities} courses={data.courseById} onToggle={(a) => data.toggle(a)} />
+      {#if week}
+        <WeekPanel
+          bind:this={weekPanel}
+          activities={weekActivities}
+          courses={data.courses}
+          onToggle={(a) => data.toggle(a)}
+          onRename={(a, title) => data.rename(a, title)}
+          onRemove={remove}
+          onAdd={(title, courseId) => data.addToWeek(courseId, title)}
+        />
+      {/if}
     </aside>
   </div>
 </div>
+
+{#if deleted}
+  <div class="toast" role="status" in:panelIn>
+    <span class="toast-text" title={deleted.title}>{t("activity.deleted", { title: deleted.title })}</span>
+    <button class="btn btn-small" title="{t('activity.undo')} (Ctrl+Z)" onclick={undo}>{t("activity.undo")}</button>
+  </div>
+{/if}
 
 <style>
   .page {
@@ -349,5 +372,34 @@
     place-items: center;
     color: var(--text-muted);
     pointer-events: none;
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: var(--space-5);
+    translate: -50% 0;
+    max-width: min(480px, calc(100vw - 64px));
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    z-index: 10;
+  }
+
+  .toast-text {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .btn-small {
+    flex: none;
+    min-height: 28px;
+    padding: 0 10px;
+    font-size: var(--text-sm);
   }
 </style>

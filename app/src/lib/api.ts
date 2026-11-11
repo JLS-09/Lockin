@@ -97,6 +97,7 @@ export const api = {
   renameActivity: (activityId: string, title: string) =>
     invoke<void>("rename_activity", { activityId, title }),
   removeActivity: (activityId: string) => invoke<void>("remove_activity", { activityId }),
+  restoreActivity: (activityId: string) => invoke<void>("restore_activity", { activityId }),
 
   addTemplate: (courseId: string, kind: string | null, title: string) =>
     invoke<number>("add_template", { courseId, kind, title }),

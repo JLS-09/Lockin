@@ -43,8 +43,21 @@
   "banner.activitiesMoved.other": " (de {count} activiteiten verhuisden mee)",
   "banner.cancelled": " op {day} is geannuleerd",
   "banner.gotIt": "Begrepen",
-  "today.done": "{done} van {total} gedaan",
   "today.empty": "Niets af te vinken vandaag.",
   "today.notDone": "Niet gedaan",
-  "today.hint": "Spatie vinkt de geselecteerde activiteit af"
+  "today.hint": "Spatie vinkt de geselecteerde activiteit af",
+  "progress.done": "{done} van {total} gedaan",
+  "activity.add": "Activiteit toevoegen…",
+  "activity.course": "Vak",
+  "activity.noCourse": "Geen vak",
+  "activity.rename": "Hernoemen",
+  "activity.delete": "Verwijderen",
+  "activity.deleted": "“{title}” verwijderd",
+  "activity.undo": "Ongedaan maken",
+  "block.close": "Sluiten",
+  "block.activities": "Activiteiten",
+  "block.empty": "Nog geen activiteiten voor deze les.",
+  "block.hint": "F2 hernoemt, Delete verwijdert de geselecteerde activiteit",
+  "weekTodos.title": "Deze week",
+  "weekTodos.empty": "Taken voor deze week die niet bij een les horen."
 }

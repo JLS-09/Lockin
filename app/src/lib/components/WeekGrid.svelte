@@ -16,6 +16,8 @@
     courses,
     rules,
     now,
+    selectedId,
+    onSelect,
     onShowAnyway,
   }: {
     layout: WeekLayout;
@@ -24,6 +26,10 @@
     rules: FilterRule[];
     /** The current time, updated by the page every minute. */
     now: Date;
+    /** The block whose panel is open. */
+    selectedId: string | null;
+    /** Click (or Enter / Space) on a block. */
+    onSelect: (block: ClassBlock) => void;
     /** "Show anyway" on an ignored block. */
     onShowAnyway: (block: ClassBlock) => void;
   } = $props();
@@ -37,6 +43,15 @@
 
   function hourLabel(hour: number): string {
     return formatTime(new Date(2000, 0, 1, hour));
+  }
+
+  /** Blocks are buttons: Enter and Space open them too. */
+  function onBlockKeydown(event: KeyboardEvent, block: ClassBlock) {
+    if (event.target !== event.currentTarget) return; // e.g. "Show anyway" inside it
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelect(block);
+    }
   }
 
   /** "Fri 13:00" */
@@ -76,53 +91,92 @@
     {@const name = course?.name ?? block.title}
     {@const kind = kindLabel(block.kind)}
     {@const times = `${formatTime(new Date(block.startAt))}–${formatTime(new Date(block.endAt))}`}
+    {@const selected = block.id === selectedId}
     {@const position = `grid-column: ${placed.column}; grid-row: ${placed.rowStart} / ${placed.rowEnd}; --lane: ${placed.lane}; --lanes: ${placed.lanes}; --course: ${course?.color ?? "var(--text-faint)"}`}
 
     {#if isIgnored(block)}
       {@const rule = ignoringRule(block, rules)}
-      <div class="blk ignored" style={position}>
+      {@const reason = rule
+        ? t("block.ignoredByRule", { rule: rule.pattern })
+        : block.ignoredOverride
+          ? t("block.ignoredByHand")
+          : t("block.ignored")}
+      <div
+        class="blk ignored"
+        class:selected
+        style={position}
+        role="button"
+        tabindex="0"
+        aria-pressed={selected}
+        onclick={() => onSelect(block)}
+        onkeydown={(e) => onBlockKeydown(e, block)}
+      >
         <div class="blk-title">
-          <span class="ellipsis">{name}</span>
+          <span class="ellipsis" title={name}>{name}</span>
           <svg class="icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A9 9 0 0 1 21 12a10 10 0 0 1-2.3 3M6.6 6.6A10 10 0 0 0 3 12c2 4 5.5 6 9 6 1.6 0 3.1-.4 4.4-1.1" /></svg>
         </div>
-        <span>{times}</span>
-        <span>
-          {#if rule}{t("block.ignoredByRule", { rule: rule.pattern })}
-          {:else if block.ignoredOverride}{t("block.ignoredByHand")}
-          {:else}{t("block.ignored")}{/if}
-        </span>
-        <button class="btn btn-small" onclick={() => onShowAnyway(block)}>{t("block.showAnyway")}</button>
+        <span title={times}>{times}</span>
+        <span title={reason}>{reason}</span>
+        <button
+          class="btn btn-small"
+          onclick={(e) => {
+            e.stopPropagation(); // not also open the block
+            onShowAnyway(block);
+          }}
+        >
+          {t("block.showAnyway")}
+        </button>
       </div>
     {:else if block.status === "cancelled"}
-      <div class="blk cancelled" style={position}>
+      {@const line = kind ? `${kind} · ${times}` : times}
+      <div
+        class="blk cancelled"
+        class:selected
+        style={position}
+        role="button"
+        tabindex="0"
+        aria-pressed={selected}
+        onclick={() => onSelect(block)}
+        onkeydown={(e) => onBlockKeydown(e, block)}
+      >
         <div class="blk-title">
-          <span class="name"><span class="dot" aria-hidden="true"></span><s class="ellipsis">{name}</s></span>
+          <span class="name"><span class="dot" aria-hidden="true"></span><s class="ellipsis" title={name}>{name}</s></span>
           <span class="cancelled-label">{t("block.cancelled")}</span>
         </div>
-        <span>{kind ? `${kind} · ${times}` : times}</span>
+        <span title={line}>{line}</span>
       </div>
     {:else}
       {@const progress = blockProgress(block, activities, now)}
       {@const showCount = progress.status === "partial" || progress.status === "behind"}
-      <div class="blk" style={position}>
+      {@const line = kind ? `${kind} · ${times}` : times}
+      {@const count = tn("block.activities", progress.total, { done: progress.done, total: progress.total })}
+      {@const movedText = block.movedFrom
+        ? t("block.movedFrom", { from: dayAndTime(block.movedFrom) })
+        : t("block.moved")}
+      <div
+        class="blk"
+        class:selected
+        style={position}
+        role="button"
+        tabindex="0"
+        aria-pressed={selected}
+        onclick={() => onSelect(block)}
+        onkeydown={(e) => onBlockKeydown(e, block)}
+      >
         <div class="blk-title">
-          <span class="name"><span class="dot" aria-hidden="true"></span><span class="ellipsis">{name}</span></span>
+          <span class="name"><span class="dot" aria-hidden="true"></span><span class="ellipsis" title={name}>{name}</span></span>
           {#if progress.status}<StatusIcon status={progress.status} />{/if}
         </div>
-        <span>{kind ? `${kind} · ${times}` : times}</span>
+        <span title={line}>{line}</span>
         {#if showCount}
-          <span>{tn("block.activities", progress.total, { done: progress.done, total: progress.total })}</span>
+          <span title={count}>{count}</span>
         {:else if block.location}
-          <span>{block.location}</span>
+          <span title={block.location}>{block.location}</span>
         {/if}
         {#if block.status === "moved"}
-          <span class="moved">
+          <span class="moved" title={movedText}>
             <svg class="icon" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6" /></svg>
-            <span class="ellipsis">
-              {block.movedFrom
-                ? t("block.movedFrom", { from: dayAndTime(block.movedFrom) })
-                : t("block.moved")}
-            </span>
+            <span class="ellipsis">{movedText}</span>
           </span>
         {/if}
       </div>
@@ -217,8 +271,18 @@
     transition: transform var(--duration-micro) var(--ease-out);
   }
 
+  .blk {
+    cursor: pointer;
+  }
+
   .blk:hover {
     transform: translateY(-1px);
+  }
+
+  /* The block whose panel is open. */
+  .blk.selected {
+    outline: 2px solid var(--control);
+    outline-offset: -1px;
   }
 
   .blk > span {

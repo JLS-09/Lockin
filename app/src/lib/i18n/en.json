@@ -43,8 +43,21 @@
   "banner.activitiesMoved.other": " (its {count} activities moved with it)",
   "banner.cancelled": " on {day} is cancelled",
   "banner.gotIt": "Got it",
-  "today.done": "{done} of {total} done",
   "today.empty": "Nothing to check off today.",
   "today.notDone": "Not done",
-  "today.hint": "Space checks off the selected activity"
+  "today.hint": "Space checks off the selected activity",
+  "progress.done": "{done} of {total} done",
+  "activity.add": "Add an activity…",
+  "activity.course": "Course",
+  "activity.noCourse": "No course",
+  "activity.rename": "Rename",
+  "activity.delete": "Delete",
+  "activity.deleted": "Deleted “{title}”",
+  "activity.undo": "Undo",
+  "block.close": "Close",
+  "block.activities": "Activities",
+  "block.empty": "No activities for this class yet.",
+  "block.hint": "F2 renames, Delete removes the selected activity",
+  "weekTodos.title": "This week",
+  "weekTodos.empty": "Things to do this week that aren't tied to a class."
 }

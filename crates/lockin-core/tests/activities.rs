@@ -246,3 +246,45 @@ fn week_range_is_seven_local_days() {
     let hours = (end - start).num_hours();
     assert!((167..=169).contains(&hours), "{hours} hours");
 }
+
+#[tokio::test]
+async fn removed_activity_can_be_restored() {
+    let (pool, _) = database_with_sample().await;
+    let signals = course_id(&pool, "E702010A").await;
+    let id = activity::add_to_week(&pool, Some(&signals), sample_week(), "Read chapter 3")
+        .await
+        .unwrap();
+    activity::set_done(&pool, &id, true).await.unwrap();
+
+    activity::remove(&pool, &id).await.unwrap();
+    assert!(
+        activity::in_week(&pool, sample_week())
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    // Back exactly as it was, done included.
+    activity::restore(&pool, &id).await.unwrap();
+    let week = activity::in_week(&pool, sample_week()).await.unwrap();
+    assert_eq!(week.len(), 1);
+    assert_eq!(week[0].id, id);
+    assert!(week[0].done);
+}
+
+#[tokio::test]
+async fn activities_keep_the_order_they_were_added_in() {
+    let (pool, _) = database_with_sample().await;
+    for title in ["Zebra", "Apple", "Mango"] {
+        activity::add_to_week(&pool, None, sample_week(), title)
+            .await
+            .unwrap();
+    }
+    let titles: Vec<String> = activity::in_week(&pool, sample_week())
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|a| a.title)
+        .collect();
+    assert_eq!(titles, ["Zebra", "Apple", "Mango"]);
+}
