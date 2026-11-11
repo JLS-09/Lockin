@@ -87,6 +87,11 @@
     selected ? (week?.activities.filter((a) => a.blockId === selected.id) ?? []) : [],
   );
 
+  // The Urgent panel, without deadlines just checked off in the Deadlines panel.
+  const urgentItems = $derived(
+    data.urgent.filter((i) => !(i.kind === "deadline" && data.checkedDeadlines.has(i.id))),
+  );
+
   // The Deadlines panel: open deadlines (late ones first), soonest first.
   const deadlineItems = $derived(
     data.urgent
@@ -376,7 +381,7 @@
         {/key}
       {/if}
       <TodayPanel day={now} activities={todayActivities} courses={data.courseById} onToggle={(a) => data.toggle(a)} />
-      <UrgentPanel items={data.urgent} courses={data.courseById} {now} />
+      <UrgentPanel items={urgentItems} courses={data.courseById} {now} />
       <UrgentPanel
         items={deadlineItems}
         courses={data.courseById}
@@ -385,6 +390,8 @@
         seeAllHref="/urgent?tab=deadlines"
         emptyText={t("week.noDeadlines")}
         headingId="deadlines-panel-heading"
+        onToggle={(item) => data.toggleDeadline(item)}
+        isDone={(item) => data.checkedDeadlines.has(item.id)}
       />
       {#if week}
         <WeekPanel

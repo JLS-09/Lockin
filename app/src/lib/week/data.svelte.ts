@@ -18,6 +18,8 @@ import {
   type Week,
 } from "$lib/api";
 import type { DeadlineFields } from "$lib/urgent/data.svelte";
+import { SvelteSet } from "svelte/reactivity";
+
 import { isoDate } from "$lib/i18n/index.svelte";
 
 export class WeekData {
@@ -33,6 +35,8 @@ export class WeekData {
   urgent = $state<UrgentItem[]>([]);
   /** Every deadline; the grid shows the ones of the shown week. */
   deadlines = $state<Deadline[]>([]);
+  /** Deadlines checked off in the Deadlines panel during this visit (by id). */
+  checkedDeadlines = new SvelteSet<string>();
   error = $state<string | null>(null);
   /** False when no feed is saved yet: the week page then asks for a TimeEdit link. */
   hasSchedule = $state(true);
@@ -234,7 +238,27 @@ export class WeekData {
     }
   }
 
-  // ---------- Deadlines (from the chips in the grid) ----------
+  // ---------- Deadlines (the Deadlines panel and the chips in the grid) ----------
+
+  /**
+   * Check a deadline off from the Deadlines panel, or on again. It stays in the
+   * panel as done (no reload), so a slip is one click to undo.
+   */
+  async toggleDeadline(item: UrgentItem) {
+    const done = !this.checkedDeadlines.has(item.id);
+    const show = (value: boolean) => {
+      if (value) this.checkedDeadlines.add(item.id);
+      else this.checkedDeadlines.delete(item.id);
+      this.deadlines = this.deadlines.map((d) => (d.id === item.id ? { ...d, done: value } : d));
+    };
+    show(done);
+    try {
+      await api.setDeadlineDone(item.id, done);
+    } catch (e) {
+      show(!done);
+      this.error = String(e);
+    }
+  }
 
   /** Returns false when saving failed, so the dialog stays open. */
   async updateDeadline(id: string, fields: DeadlineFields): Promise<boolean> {
