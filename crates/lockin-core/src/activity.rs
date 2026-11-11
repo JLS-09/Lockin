@@ -5,7 +5,7 @@ use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
 use sqlx::SqliteConnection;
 use sqlx::sqlite::SqlitePool;
 
-use crate::model::{Activity, ActivityTemplate, WeekProgress};
+use crate::model::{Activity, ActivityTemplate, WeekClasses, WeekProgress};
 use crate::{new_id, now_text};
 
 /// Default course colors: the first four come from the UI mockups, the others
@@ -261,13 +261,35 @@ pub async fn in_week(pool: &SqlitePool, date: NaiveDate) -> Result<Vec<Activity>
     Ok(activities)
 }
 
-/// Done and total activities per course per week: the semester overview.
-/// Activities without a course are left out.
+/// Done, overdue and total activities per course per week: the semester overview.
+/// Overdue = not done, on a class that has already ended. Activities without
+/// a course are left out.
 pub async fn progress(pool: &SqlitePool) -> Result<Vec<WeekProgress>> {
     let rows = sqlx::query_as(
-        "SELECT week, course_id, COUNT(*) AS total, SUM(done) AS done
-         FROM activity_with_week
-         WHERE course_id IS NOT NULL
+        "SELECT a.week, a.course_id, COUNT(*) AS total, SUM(a.done) AS done,
+                SUM(CASE WHEN a.done = 0 AND b.end_at < ? THEN 1 ELSE 0 END) AS overdue
+         FROM activity_with_week a
+         LEFT JOIN class_block b ON b.id = a.block_id
+         WHERE a.course_id IS NOT NULL
+         GROUP BY a.week, a.course_id
+         ORDER BY a.week",
+    )
+    .bind(now_text())
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+/// How many classes each course has per week, for the semester overview:
+/// a week without classes shows "No classes" instead of a status.
+/// Ignored and cancelled classes don't count.
+pub async fn class_weeks(pool: &SqlitePool) -> Result<Vec<WeekClasses>> {
+    // Same week calculation as the activity_with_week view (migration 0003).
+    let rows = sqlx::query_as(
+        "SELECT date(start_at, '-6 days', 'weekday 1') AS week, course_id, COUNT(*) AS classes
+         FROM class_block
+         WHERE deleted = 0 AND course_id IS NOT NULL AND status != 'cancelled'
+           AND COALESCE(ignored_override, ignored_by_rule) = 0
          GROUP BY week, course_id
          ORDER BY week",
     )

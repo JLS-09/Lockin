@@ -30,6 +30,7 @@
   --text-done: #9aa1ad; /* a checked-off activity */
   --text-ignored: #8d96a6;
   --text-cancelled: #ef8a8a;
+  --text-none: #4a505c; /* the "No classes" dash in the semester overview */
 
   /* Controls: no accent hue, only greys, so themes bring the color. */
   --control: #d4d7dd;
@@ -39,6 +40,7 @@
   /* Status colors. Fixed: a theme may nudge them, never make them unreadable.
      Every status also has its own icon, so color is never the only signal. */
   --status-done: #4caf7a;
+  --status-done-text: #7fcf9f; /* "Done" as text, lighter for contrast */
   --status-behind: #e05d5d;
   --status-partial: #e0a050;
   --status-planned: #7a8699;

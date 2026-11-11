@@ -7,6 +7,7 @@
   // Keys: ← / → switch weeks, Home goes to this week, A adds an activity,
   // Escape closes the class panel, Ctrl+Z brings back a deleted activity.
   import { goto } from "$app/navigation";
+  import { page } from "$app/state";
   import { cubicOut } from "svelte/easing";
   import { fade, fly } from "svelte/transition";
 
@@ -30,6 +31,9 @@
   import { layoutWeek, shownRange } from "$lib/week/layout";
 
   const data = new WeekData();
+  // "/?date=2026-10-26" opens that week (the semester overview links here like that).
+  const startDate = page.url.searchParams.get("date");
+  if (startDate) data.date = parseIsoDate(startDate);
   let now = $state(new Date());
   // -1 = the new week slides in from the left, 1 = from the right.
   let direction = $state(0);

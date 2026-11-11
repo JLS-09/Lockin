@@ -108,6 +108,8 @@ pub struct WeekProgress {
     pub course_id: String,
     pub total: i64,
     pub done: i64,
+    /// Not done, on a class that has already ended.
+    pub overdue: i64,
 }
 
 /// One kind of class a course has, e.g. Signalen en systemen has "werkcollege".
@@ -116,4 +118,14 @@ pub struct WeekProgress {
 pub struct CourseKind {
     pub course_id: String,
     pub kind: String,
+}
+
+/// How many classes one course has in one week.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekClasses {
+    /// Monday of the week, e.g. "2026-11-09".
+    pub week: String,
+    pub course_id: String,
+    pub classes: i64,
 }

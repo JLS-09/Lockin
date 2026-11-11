@@ -10,7 +10,8 @@
 
 use chrono::NaiveDate;
 use lockin_core::model::{
-    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, FilterRule, WeekProgress,
+    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, FilterRule, WeekClasses,
+    WeekProgress,
 };
 use lockin_core::{activity, db, paths};
 use serde::Serialize;
@@ -69,6 +70,12 @@ async fn course_kinds(pool: State<'_, db::Pool>) -> CommandResult<Vec<CourseKind
 #[tauri::command]
 async fn templates(pool: State<'_, db::Pool>) -> CommandResult<Vec<ActivityTemplate>> {
     activity::templates(&pool).await.map_err(message)
+}
+
+/// Classes per course per week, for the semester overview.
+#[tauri::command]
+async fn class_weeks(pool: State<'_, db::Pool>) -> CommandResult<Vec<WeekClasses>> {
+    activity::class_weeks(&pool).await.map_err(message)
 }
 
 /// Done and total activities per course per week, for the semester overview.
@@ -219,6 +226,7 @@ pub fn run() {
             week,
             templates,
             progress,
+            class_weeks,
             rules,
             add_block_activity,
             add_week_activity,

@@ -236,6 +236,8 @@ async fn standalone_activity_and_progress() {
     assert_eq!(progress[0].week, "2099-11-09");
     assert_eq!(progress[0].course_id, signals);
     assert_eq!((progress[0].done, progress[0].total), (1, 3));
+    // The sample's classes are in 2099: nothing is overdue yet.
+    assert_eq!(progress[0].overdue, 0);
 }
 
 #[test]
@@ -301,4 +303,50 @@ async fn course_kinds_lists_each_kind_once() {
         .map(|k| k.kind)
         .collect();
     assert_eq!(kinds, ["hoorcollege", "werkcollege"]);
+}
+
+#[tokio::test]
+async fn class_weeks_counts_followed_classes() {
+    let (pool, _) = database_with_sample().await;
+    let signals = course_id(&pool, "E702010A").await;
+    let math = course_id(&pool, "E701033A").await;
+
+    let count = |rows: &[lockin_core::model::WeekClasses], course: &str| {
+        rows.iter()
+            .find(|r| r.course_id == course)
+            .map(|r| (r.week.clone(), r.classes))
+    };
+    let rows = activity::class_weeks(&pool).await.unwrap();
+    assert_eq!(count(&rows, &signals), Some(("2099-11-09".into(), 2)));
+    assert_eq!(count(&rows, &math), Some(("2099-11-09".into(), 1)));
+
+    // Wiskunde's only class is "zelfstandig werk": once ignored, no classes that week.
+    db::add_title_rule(&pool, "zelfstandig werk").await.unwrap();
+    let rows = activity::class_weeks(&pool).await.unwrap();
+    assert_eq!(count(&rows, &math), None);
+}
+
+#[tokio::test]
+async fn open_activities_on_ended_classes_are_overdue() {
+    let pool = db::open_in_memory().await.unwrap();
+    let source = db::add_timeedit_source(&pool, "https://example.test/feed.ics")
+        .await
+        .unwrap();
+    // Move the sample's first class (Signalen en systemen) to 2020.
+    let mut events = timeedit::parse(SAMPLE).unwrap();
+    let back = chrono::Duration::days(365 * 79);
+    events[0].start -= back;
+    events[0].end -= back;
+    db::save_feed(&pool, &source, &events).await.unwrap();
+
+    let signals = course_id(&pool, "E702010A").await;
+    activity::add_template(&pool, &signals, None, "Review")
+        .await
+        .unwrap();
+
+    let progress = activity::progress(&pool).await.unwrap();
+    let past = progress.iter().find(|p| p.week.as_str() < "2099").unwrap();
+    assert_eq!((past.done, past.overdue, past.total), (0, 1, 1));
+    let future = progress.iter().find(|p| p.week.as_str() > "2099").unwrap();
+    assert_eq!(future.overdue, 0);
 }

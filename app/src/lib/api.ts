@@ -79,6 +79,14 @@ export interface WeekProgress {
   courseId: string;
   total: number;
   done: number;
+  /** Not done, on a class that has already ended. */
+  overdue: number;
+}
+
+export interface WeekClasses {
+  week: string;
+  courseId: string;
+  classes: number;
 }
 
 export interface Week {
@@ -93,6 +101,7 @@ export const api = {
   week: (date: string) => invoke<Week>("week", { date }),
   templates: () => invoke<ActivityTemplate[]>("templates"),
   progress: () => invoke<WeekProgress[]>("progress"),
+  classWeeks: () => invoke<WeekClasses[]>("class_weeks"),
   rules: () => invoke<FilterRule[]>("rules"),
 
   addBlockActivity: (blockId: string, title: string) =>
