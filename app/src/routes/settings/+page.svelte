@@ -1,12 +1,16 @@
 <script lang="ts">
   // Settings. Not in the mockups; built in the style of the panels.
-  // - Language
+  // - Schedule: the TimeEdit feeds (the week page links here with #schedule)
+  // - Filter rules: which classes to ignore
   // - Courses: the activity templates per course ("After every WPO: Exercises").
   //   The class panel links here with ?course=<id> to open that course.
+  // - Language
   import { tick } from "svelte";
   import { page } from "$app/state";
   import { api, type ActivityTemplate, type Course, type CourseKind } from "$lib/api";
   import CourseTemplates from "$lib/components/CourseTemplates.svelte";
+  import RulesPanel from "$lib/components/RulesPanel.svelte";
+  import SchedulePanel from "$lib/components/SchedulePanel.svelte";
   import { i18n, locales, t, type Locale } from "$lib/i18n/index.svelte";
 
   // Each language in its own language, so you can always find yours.
@@ -40,6 +44,15 @@
     document.getElementById(`course-${wanted}`)?.scrollIntoView({ block: "start" });
   });
 
+  // A new feed or rule can bring new courses and kinds of class.
+  async function reloadCourses() {
+    try {
+      [courses, kinds] = await Promise.all([api.courses(), api.courseKinds()]);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   async function addTemplate(courseId: string, kind: string | null, title: string) {
     try {
       const created = await api.addTemplate(courseId, kind, title);
@@ -69,24 +82,8 @@
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
-  <section class="panel" aria-labelledby="language-heading">
-    <div class="panel-head">
-      <h2 class="panel-title" id="language-heading">{t("language.label")}</h2>
-    </div>
-    <p class="intro">{t("language.hint")}</p>
-    <div class="choice" role="group" aria-labelledby="language-heading">
-      {#each locales as locale (locale)}
-        <button
-          class="btn"
-          class:btn-primary={i18n.locale === locale}
-          aria-pressed={i18n.locale === locale}
-          onclick={() => i18n.setLocale(locale)}
-        >
-          {names[locale]}
-        </button>
-      {/each}
-    </div>
-  </section>
+  <SchedulePanel onChange={reloadCourses} />
+  <RulesPanel onChange={reloadCourses} />
 
   <section aria-labelledby="courses-heading" class="courses">
     <h2 class="section-title" id="courses-heading">{t("settings.courses")}</h2>
@@ -104,6 +101,25 @@
         onRemove={removeTemplate}
       />
     {/each}
+  </section>
+
+  <section class="panel language" aria-labelledby="language-heading">
+    <div class="panel-head">
+      <h2 class="panel-title" id="language-heading">{t("language.label")}</h2>
+    </div>
+    <p class="intro">{t("language.hint")}</p>
+    <div class="choice" role="group" aria-labelledby="language-heading">
+      {#each locales as locale (locale)}
+        <button
+          class="btn"
+          class:btn-primary={i18n.locale === locale}
+          aria-pressed={i18n.locale === locale}
+          onclick={() => i18n.setLocale(locale)}
+        >
+          {names[locale]}
+        </button>
+      {/each}
+    </div>
   </section>
 </div>
 
@@ -140,6 +156,10 @@
     display: flex;
     gap: var(--space-2);
     padding: 0 10px var(--space-2);
+  }
+
+  .language {
+    margin-top: var(--space-3);
   }
 
   .courses {

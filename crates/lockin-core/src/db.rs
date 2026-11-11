@@ -78,10 +78,24 @@ pub async fn add_timeedit_source(pool: &SqlitePool, url: &str) -> Result<String>
 
 /// All saved calendar sources.
 pub async fn sources(pool: &SqlitePool) -> Result<Vec<CalendarSource>> {
-    let sources = sqlx::query_as("SELECT id, kind, url FROM calendar_source WHERE deleted = 0")
-        .fetch_all(pool)
-        .await?;
+    let sources = sqlx::query_as(
+        "SELECT id, kind, url, last_fetched_at FROM calendar_source WHERE deleted = 0",
+    )
+    .fetch_all(pool)
+    .await?;
     Ok(sources)
+}
+
+/// How many (not deleted) classes each source holds, by source id.
+pub async fn classes_per_source(pool: &SqlitePool) -> Result<Vec<(String, i64)>> {
+    let counts = sqlx::query_as(
+        "SELECT source_id, COUNT(*) FROM class_block
+         WHERE deleted = 0 AND source_id IS NOT NULL
+         GROUP BY source_id",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(counts)
 }
 
 /// Remove a source and hide the blocks that belong to it.
@@ -286,10 +300,13 @@ pub async fn course_kinds(pool: &SqlitePool) -> Result<Vec<CourseKind>> {
 }
 
 /// What one sync changed.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, PartialEq, serde::Serialize)]
 pub struct SyncResult {
     pub added: u32,
+    /// Known blocks seen again, changed or not.
     pub updated: u32,
+    /// Of those, the ones whose time changed.
+    pub moved: u32,
     pub cancelled: u32,
 }
 
@@ -397,6 +414,7 @@ pub async fn save_feed(
 
                 // Remember where it was before its first move, and show the change again.
                 if moved {
+                    result.moved += 1;
                     sqlx::query(
                         "UPDATE class_block
                          SET moved_from = COALESCE(moved_from, ?), change_seen = 0

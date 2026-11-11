@@ -174,7 +174,8 @@ async fn moved_block_remembers_its_first_time_until_seen() {
     // Moved once: remembers where it was.
     events[0].start += chrono::Duration::hours(1);
     events[0].end += chrono::Duration::hours(1);
-    db::save_feed(&pool, &source, &events).await.unwrap();
+    let result = db::save_feed(&pool, &source, &events).await.unwrap();
+    assert_eq!((result.updated, result.moved), (4, 1));
     let moved = block(all().await.unwrap());
     assert_eq!(moved.moved_from.as_deref(), Some(original));
     assert!(!moved.change_seen);

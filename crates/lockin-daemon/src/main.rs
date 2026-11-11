@@ -34,8 +34,7 @@ async fn main() -> Result<()> {
     match (command, argument) {
         (Some("sync"), None) => sync_all(&pool).await?,
         (Some("sync"), Some(url)) => {
-            let source_id = db::add_timeedit_source(&pool, url).await?;
-            let result = import::import_source(&pool, &source_id, url).await?;
+            let result = import::add_feed(&pool, url).await?;
             print_result(&result);
         }
         (Some("sync-file"), Some(file)) => {
@@ -116,16 +115,19 @@ async fn main() -> Result<()> {
 
 /// Fetch every saved feed again. One failing feed doesn't stop the others.
 async fn sync_all(pool: &db::Pool) -> Result<()> {
-    let sources = db::sources(pool).await?;
-    if sources.is_empty() {
+    let results = import::sync_all(pool).await?;
+    if results.is_empty() {
         println!("No feeds saved yet. Add one with: lockin-daemon sync <url>");
     }
-    for source in sources {
+    for feed in results {
         // Never print the full URL: it contains a personal key.
-        print!("{} feed {}: ", source.kind, &source.id[..8]);
-        match import::import_source(pool, &source.id, &source.url).await {
-            Ok(result) => print_result(&result),
-            Err(error) => println!("failed: {error:#}"),
+        print!("feed {}: ", &feed.source_id[..8]);
+        match feed.error {
+            Some(error) => println!("failed: {error}"),
+            None => println!(
+                "{} new, {} updated ({} moved), {} cancelled",
+                feed.added, feed.updated, feed.moved, feed.cancelled
+            ),
         }
     }
     Ok(())
@@ -148,8 +150,8 @@ fn print_feed_contents(events: &[FeedEvent]) {
 
 fn print_result(result: &db::SyncResult) {
     println!(
-        "{} new, {} updated, {} cancelled",
-        result.added, result.updated, result.cancelled
+        "{} new, {} updated ({} moved), {} cancelled",
+        result.added, result.updated, result.moved, result.cancelled
     );
 }
 

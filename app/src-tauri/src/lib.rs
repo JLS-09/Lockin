@@ -9,11 +9,12 @@
 //! `block_id` here is `blockId` in `invoke`.
 
 use chrono::NaiveDate;
+use lockin_core::db::SyncResult;
 use lockin_core::model::{
-    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, FilterRule, WeekClasses,
-    WeekProgress,
+    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, FeedInfo, FeedSync, FilterRule,
+    WeekClasses, WeekProgress,
 };
-use lockin_core::{activity, db, paths};
+use lockin_core::{activity, db, import, paths};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -176,6 +177,68 @@ async fn rules(pool: State<'_, db::Pool>) -> CommandResult<Vec<FilterRule>> {
     db::filter_rules(&pool).await.map_err(message)
 }
 
+// ---------- Schedule: feeds and rules ----------
+
+/// The saved feeds, without their URLs (they hold a personal key).
+#[tauri::command]
+async fn feeds(pool: State<'_, db::Pool>) -> CommandResult<Vec<FeedInfo>> {
+    import::feeds(&pool).await.map_err(message)
+}
+
+/// Save a pasted TimeEdit link and import it right away.
+#[tauri::command]
+async fn add_feed(pool: State<'_, db::Pool>, url: String) -> CommandResult<SyncResult> {
+    import::add_feed(&pool, &url).await.map_err(message)
+}
+
+/// Fetch every saved feed again.
+#[tauri::command]
+async fn sync_feeds(pool: State<'_, db::Pool>) -> CommandResult<Vec<FeedSync>> {
+    import::sync_all(&pool).await.map_err(message)
+}
+
+/// Remove a feed, then sync the others, so classes they also have come back.
+/// Returns how many classes the removed feed held.
+#[tauri::command]
+async fn remove_feed(pool: State<'_, db::Pool>, source_id: String) -> CommandResult<u32> {
+    let hidden = db::remove_source(&pool, &source_id)
+        .await
+        .map_err(message)?;
+    import::sync_all(&pool).await.map_err(message)?;
+    Ok(hidden)
+}
+
+/// How many classes a TimeEdit download added, out of how many in the file.
+#[derive(Serialize)]
+struct HistoryResult {
+    added: u32,
+    total: u32,
+}
+
+/// Add the past classes from a downloaded TimeEdit file. The frontend reads
+/// the file and sends its text, so no file access is needed on this side.
+#[tauri::command]
+async fn import_history(pool: State<'_, db::Pool>, text: String) -> CommandResult<HistoryResult> {
+    let (added, total) = import::import_history_text(&pool, &text)
+        .await
+        .map_err(message)?;
+    Ok(HistoryResult { added, total })
+}
+
+/// "Ignore classes whose title contains …". Returns how many classes changed.
+#[tauri::command]
+async fn add_rule(pool: State<'_, db::Pool>, pattern: String) -> CommandResult<u32> {
+    db::add_title_rule(&pool, pattern.trim())
+        .await
+        .map_err(message)
+}
+
+/// Returns how many classes changed.
+#[tauri::command]
+async fn remove_rule(pool: State<'_, db::Pool>, rule_id: String) -> CommandResult<u32> {
+    db::remove_rule(&pool, &rule_id).await.map_err(message)
+}
+
 // ---------- Blocks ----------
 
 /// "Got it" on the schedule changes banner.
@@ -238,6 +301,13 @@ pub fn run() {
             remove_template,
             set_block_ignored,
             acknowledge_changes,
+            feeds,
+            add_feed,
+            sync_feeds,
+            remove_feed,
+            import_history,
+            add_rule,
+            remove_rule,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Lockin app");

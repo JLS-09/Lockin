@@ -124,3 +124,13 @@ export function formatRange(start: Date, end: Date): string {
     year: "numeric",
   }).formatRange(start, end);
 }
+
+/** "5 minutes ago" / "5 minuten geleden", "yesterday" / "gisteren". */
+export function formatAgo(date: Date, now = new Date()): string {
+  const seconds = (date.getTime() - now.getTime()) / 1000;
+  const format = new Intl.RelativeTimeFormat(i18n.intlTag, { numeric: "auto" });
+  if (Math.abs(seconds) < 60) return format.format(0, "minute");
+  if (Math.abs(seconds) < 3600) return format.format(Math.round(seconds / 60), "minute");
+  if (Math.abs(seconds) < 86400) return format.format(Math.round(seconds / 3600), "hour");
+  return format.format(Math.round(seconds / 86400), "day");
+}

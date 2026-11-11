@@ -25,6 +25,10 @@ export class WeekData {
   courses = $state<Course[]>([]);
   rules = $state<FilterRule[]>([]);
   error = $state<string | null>(null);
+  /** False when no feed is saved yet: the week page then asks for a TimeEdit link. */
+  hasSchedule = $state(true);
+  /** True while the feeds sync in the background. */
+  syncing = $state(false);
 
   courseById = $derived(new Map(this.courses.map((c) => [c.id, c])));
 
@@ -56,6 +60,33 @@ export class WeekData {
       this.todayWeek = await api.week(isoDate(new Date()));
     } catch (e) {
       this.error = String(e);
+    }
+  }
+
+  /**
+   * Sync the feeds when the last sync is over an hour old, then reload what
+   * changed. Until the daemon does this hourly (phase 4), opening the app does.
+   * A failed sync (offline, say) is quiet here; Settings shows the error.
+   */
+  async syncIfStale() {
+    try {
+      const feeds = await api.feeds();
+      this.hasSchedule = feeds.length > 0;
+      const hourAgo = Date.now() - 60 * 60 * 1000;
+      const stale = feeds.some(
+        (f) => !f.lastFetchedAt || new Date(f.lastFetchedAt).getTime() < hourAgo,
+      );
+      if (!stale) return;
+      this.syncing = true;
+      const results = await api.syncFeeds();
+      const changed = results.some((r) => r.added + r.moved + r.cancelled > 0);
+      if (changed) {
+        await Promise.all([this.loadCoursesAndRules(), this.loadWeek(), this.loadToday()]);
+      }
+    } catch (e) {
+      console.warn("Background sync failed:", e);
+    } finally {
+      this.syncing = false;
     }
   }
 

@@ -89,6 +89,35 @@ export interface WeekClasses {
   classes: number;
 }
 
+/** A saved feed, without its URL (it holds a personal key). */
+export interface FeedInfo {
+  id: string;
+  kind: string;
+  /** "cloud.timeedit.net", or the file name. */
+  origin: string;
+  lastFetchedAt: string | null;
+  classes: number;
+}
+
+/** What syncing one feed changed, or why it failed. */
+export interface FeedSync {
+  sourceId: string;
+  added: number;
+  /** Known classes seen again, changed or not. */
+  updated: number;
+  /** Classes whose time changed. */
+  moved: number;
+  cancelled: number;
+  error: string | null;
+}
+
+export interface SyncResult {
+  added: number;
+  updated: number;
+  moved: number;
+  cancelled: number;
+}
+
 export interface Week {
   monday: string;
   blocks: ClassBlock[];
@@ -122,4 +151,15 @@ export const api = {
   setBlockIgnored: (blockId: string, ignored: boolean | null) =>
     invoke<void>("set_block_ignored", { blockId, ignored }),
   acknowledgeChanges: (blockIds: string[]) => invoke<void>("acknowledge_changes", { blockIds }),
+
+  feeds: () => invoke<FeedInfo[]>("feeds"),
+  addFeed: (url: string) => invoke<SyncResult>("add_feed", { url }),
+  syncFeeds: () => invoke<FeedSync[]>("sync_feeds"),
+  /** Returns how many classes the removed feed held. */
+  removeFeed: (sourceId: string) => invoke<number>("remove_feed", { sourceId }),
+  importHistory: (text: string) =>
+    invoke<{ added: number; total: number }>("import_history", { text }),
+  /** Returns how many classes changed. */
+  addRule: (pattern: string) => invoke<number>("add_rule", { pattern }),
+  removeRule: (ruleId: string) => invoke<number>("remove_rule", { ruleId }),
 };

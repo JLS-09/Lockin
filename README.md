@@ -18,8 +18,10 @@ study sessions that block distracting apps and websites.
 
 **Working now**
 
-- **Schedule import** from TimeEdit via its iCal feed, with moved and cancelled classes
-  marked instead of silently changed or deleted
+- **Schedule import** from TimeEdit: paste the subscription link in Settings and the app
+  syncs it, again whenever it's opened after an hour. Moved and cancelled classes are
+  marked instead of silently changed or deleted, and earlier weeks can be imported from a
+  downloaded file
 - **Week view:** the week as a grid with every class in its course color, a status per
   class (done, partly done, behind, planned), and a banner when the schedule changed
 - **Activities** per class to check off, rename or delete (with undo), plus to-dos for the
@@ -104,11 +106,29 @@ pnpm install
 pnpm tauri dev
 ```
 
-The app reads the same database as the daemon, so import your schedule first (below).
+On first start the week is empty: open **Settings → Schedule** and paste your TimeEdit link.
 
 ## Importing the schedule
 
-Feeds are added from the command line for now (adding them in the app comes later):
+In TimeEdit, choose **Subscribe**, pick the longest period and copy the link. Paste it in
+**Settings → Schedule** (a `webcal://` link works too). The link holds a personal key, so
+Lockin never shows it in full, not even in error messages, and it never goes in git.
+
+Under **Filter rules** in Settings you can ignore classes you don't attend, e.g. everything
+with "zelfstandig werk" in the title.
+
+A TimeEdit subscription never includes classes older than 14 days. When you start
+mid-semester, download the earlier weeks once in TimeEdit (**Download → iCal**) and import
+the file with **Settings → Schedule → Import file…**. Only past classes Lockin doesn't know
+yet are added, and the file isn't saved as a feed.
+
+Running a sync again updates classes by their iCal UID: a class whose time changed is marked
+`moved`, and a future class that disappears from the feed is marked `cancelled` instead of
+being deleted. Past classes stay, even after they drop out of the feed.
+
+### From the command line
+
+The daemon is also a small command-line tool on the same database:
 
 ```bash
 cargo run -p lockin-daemon -- sync "<TimeEdit iCal URL>"  # save the feed and import it
@@ -117,22 +137,9 @@ cargo run -p lockin-daemon -- ignore "zelfstandig werk"   # add a filter rule (a
 cargo run -p lockin-daemon -- week                        # this week's classes, with short ids
 cargo run -p lockin-daemon -- courses                     # the courses found in the schedule
 cargo run -p lockin-daemon -- feeds                       # what each saved feed contains
+cargo run -p lockin-daemon -- import-history <file>.ics   # earlier weeks from a download
 ```
 
-Get the URL in TimeEdit via **Subscribe**. It's personal, so don't commit it.
-
-Running `sync` again updates classes by their iCal UID: a class whose time changed is marked
-`moved`, and a future class that disappears from the feed is marked `cancelled` instead of
-being deleted. Past classes stay, even after they drop out of the feed.
-
-A TimeEdit subscription never includes classes older than 14 days. To add the earlier weeks
-of a semester, download that period once in TimeEdit (**Download → iCal**) and import it:
-
-```bash
-cargo run -p lockin-daemon -- import-history <downloaded file>.ics
-```
-
-This only adds past classes Lockin doesn't know yet, and the file isn't saved as a feed.
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
 `remove-feed` and `keep-block` / `ignore-block` / `reset-block` for a manual exception per block.
 

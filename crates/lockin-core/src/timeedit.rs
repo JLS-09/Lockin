@@ -10,14 +10,21 @@ use icalendar::{
 use crate::model::FeedEvent;
 
 /// Download the feed text from a TimeEdit subscription URL.
+/// Errors never contain the URL: it holds a personal key, and errors end up
+/// on screen (Settings, the CLI).
 pub async fn download(url: &str) -> Result<String> {
     let response = reqwest::get(url)
         .await
+        .map_err(|e| anyhow!(e.without_url()))
         .context("could not reach the feed")?;
     let response = response
         .error_for_status()
+        .map_err(|e| anyhow!(e.without_url()))
         .context("the feed returned an error")?;
-    let text = response.text().await?;
+    let text = response
+        .text()
+        .await
+        .map_err(|e| anyhow!(e.without_url()))?;
     Ok(text)
 }
 

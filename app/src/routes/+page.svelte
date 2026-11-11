@@ -88,6 +88,7 @@
 
   data.loadCoursesAndRules();
   data.loadToday();
+  data.syncIfStale();
 
   // Reload whenever the date changes. The old week stays on screen until the
   // new one is there, so nothing flashes.
@@ -237,6 +238,7 @@
         {@const [first, last] = shownRange(layout)}
         <span class="range">{formatRange(first, last)}</span>
       {/if}
+      {#if data.syncing}<span class="syncing" role="status">{t("week.syncing")}</span>{/if}
     </div>
     {#if ignoredCount > 0}
       <button class="btn" aria-pressed={showIgnored} onclick={toggleIgnored}>
@@ -287,7 +289,15 @@
           </div>
         {/key}
         <!-- On top of the grid, so the grid doesn't jump between empty and full weeks. -->
-        {#if week.blocks.length === 0}
+        {#if !data.hasSchedule}
+          <div class="empty no-schedule">
+            <div class="no-schedule-card">
+              <h2>{t("week.noSchedule")}</h2>
+              <p>{t("week.noScheduleHint")}</p>
+              <a class="btn btn-primary" href="/settings#schedule">{t("week.addSchedule")}</a>
+            </div>
+          </div>
+        {:else if week.blocks.length === 0}
           <p class="empty">{t("week.empty")}</p>
         {/if}
       {/if}
@@ -404,6 +414,47 @@
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+  }
+
+  .syncing {
+    font-size: var(--text-sm);
+    color: var(--text-faint);
+  }
+
+  /* No feed yet: a card on top of the empty grid, pointing to Settings. */
+  .no-schedule {
+    pointer-events: auto;
+    background: var(--overlay);
+    /* Above the grid's blocks and now line (z-index 1 and 2). */
+    z-index: 3;
+  }
+
+  .no-schedule-card {
+    max-width: 360px;
+    padding: var(--space-5);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border-strong);
+    background: var(--surface-2);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+    color: var(--text);
+  }
+
+  .no-schedule-card h2 {
+    font-size: var(--text-title);
+    font-weight: var(--weight-bold);
+  }
+
+  .no-schedule-card p {
+    font-size: var(--text-md);
+    color: var(--text-muted);
+    margin-bottom: var(--space-2);
+  }
+
+  .no-schedule-card a {
+    text-decoration: none;
   }
 
   .empty {

@@ -68,6 +68,36 @@ pub struct CalendarSource {
     pub id: String,
     pub kind: String,
     pub url: String,
+    pub last_fetched_at: Option<String>,
+}
+
+/// A saved feed as the app shows it: everything except the URL, which holds a
+/// personal key and never leaves the Rust side.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedInfo {
+    pub id: String,
+    /// "timeedit" (or "ufora" later).
+    pub kind: String,
+    /// Where it comes from without the key: "cloud.timeedit.net", or the file name.
+    pub origin: String,
+    pub last_fetched_at: Option<String>,
+    /// How many classes this feed holds now.
+    pub classes: i64,
+}
+
+/// The result of syncing one feed, for the app: what changed, or why it failed.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FeedSync {
+    pub source_id: String,
+    pub added: u32,
+    pub updated: u32,
+    /// Classes whose time changed.
+    pub moved: u32,
+    pub cancelled: u32,
+    /// Set when this feed couldn't be fetched; the others still sync.
+    pub error: Option<String>,
 }
 
 /// Something to check off, e.g. "Do the exercises".
