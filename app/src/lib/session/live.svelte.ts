@@ -6,12 +6,19 @@
 // the timer and the break credit are always what Rust works out (no copy of the
 // rules here). Without one, every few seconds, to notice when one starts.
 // The daemon is asked whether it's running every 15 seconds.
+//
+// The emergency stop is held open in the daemon: while it's open, the app
+// checks in every 2 seconds (`emergencyKeepOpen`); after 2 minutes the daemon
+// ends the session. When the check-ins stop (the page is left, the app closes),
+// the daemon drops the stop.
 
-import { api, type CurrentSession, type DaemonStatus } from "$lib/api";
+import { api, type CurrentSession, type DaemonStatus, type EmergencyStatus } from "$lib/api";
 
 const FAST_MS = 1000;
 const SLOW_MS = 5000;
 const DAEMON_MS = 15_000;
+/** Check in this often while the emergency stop is open (the daemon drops it after 10 s without). */
+const KEEP_OPEN_MS = 2000;
 
 class LiveSession {
   /** The running session, or null. */
@@ -26,6 +33,14 @@ class LiveSession {
   error = $state<string | null>(null);
   /** True while an action waits for the daemon's answer. */
   busy = $state(false);
+  /** The emergency stop while it's open, as the daemon last answered; else null. */
+  emergency = $state<EmergencyStatus | null>(null);
+  /** The emergency stop that just ended a session, for "Stopped · −50 points". */
+  stoppedByEmergency = $state<EmergencyStatus | null>(null);
+
+  /** True from pressing "Emergency stop" until it's closed or done. */
+  #holding = false;
+  #keepOpenTimer: ReturnType<typeof setInterval> | undefined;
 
   #timer: ReturnType<typeof setTimeout> | undefined;
   #daemonTimer: ReturnType<typeof setInterval> | undefined;
@@ -95,7 +110,52 @@ class LiveSession {
 
   takeBreak = () => this.#ask(() => api.takeBreak());
   resume = () => this.#ask(() => api.resumeSession());
-  emergencyStop = () => this.#ask(() => api.emergencyStop());
+
+  /** "Emergency stop": open it in the daemon and keep checking in. */
+  async openEmergency() {
+    if (this.#holding) return;
+    this.#holding = true;
+    this.error = null;
+    this.stoppedByEmergency = null;
+    await this.#keepOpen();
+    if (this.#holding) this.#keepOpenTimer = setInterval(() => this.#keepOpen(), KEEP_OPEN_MS);
+  }
+
+  /** "Keep studying", Escape or leaving the page: close the stop. */
+  async cancelEmergency() {
+    if (!this.#holding) return;
+    this.#closeEmergency();
+    try {
+      await api.emergencyCancel();
+    } catch {
+      // The daemon is gone: then there's no stop left to close either.
+    }
+  }
+
+  async #keepOpen() {
+    try {
+      const status = await api.emergencyKeepOpen();
+      // Closed while this check-in was on its way: the cancel already went out.
+      if (!this.#holding) return;
+      if (status.stopped) {
+        this.#closeEmergency();
+        this.stoppedByEmergency = status;
+        await this.refresh();
+      } else {
+        this.emergency = status;
+      }
+    } catch (e) {
+      this.error = String(e);
+      this.#closeEmergency();
+      this.refreshDaemon();
+    }
+  }
+
+  #closeEmergency() {
+    this.#holding = false;
+    clearInterval(this.#keepOpenTimer);
+    this.emergency = null;
+  }
 
   /** Ask the daemon for something, then show the new state at once. */
   async #ask(action: () => Promise<void>): Promise<boolean> {

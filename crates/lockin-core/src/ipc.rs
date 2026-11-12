@@ -19,6 +19,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
+use crate::model::EmergencyStatus;
 use crate::paths;
 
 /// How long a request may take before the app gives up on the daemon.
@@ -38,8 +39,12 @@ pub enum Request {
     TakeBreak,
     /// End the break: back to work, blocking on.
     Resume,
-    /// End the running session now with the emergency button.
-    EmergencyStop,
+    /// Open the emergency stop, or keep it open: sent when you press "Emergency
+    /// stop" and every 2 seconds while it stays open. After 2 minutes the daemon
+    /// ends the session (`emergency.rs`); the answer carries `emergency`.
+    EmergencyKeepOpen,
+    /// "Keep studying": close the emergency stop.
+    EmergencyCancel,
 }
 
 /// The daemon's answer. `ok` false means `error` says why.
@@ -49,6 +54,9 @@ pub struct Response {
     pub error: Option<String>,
     /// Only for `Request::Status`.
     pub status: Option<DaemonStatus>,
+    /// Only for `Request::EmergencyKeepOpen`: where the stop stands.
+    #[serde(default)]
+    pub emergency: Option<EmergencyStatus>,
 }
 
 impl Response {
@@ -57,6 +65,7 @@ impl Response {
             ok: true,
             error: None,
             status: None,
+            emergency: None,
         }
     }
 
@@ -65,6 +74,7 @@ impl Response {
             ok: false,
             error: Some(format!("{error:#}")),
             status: None,
+            emergency: None,
         }
     }
 }
@@ -149,8 +159,12 @@ mod tests {
     fn requests_are_one_json_line() {
         let text = serde_json::to_string(&Request::TakeBreak).unwrap();
         assert_eq!(text, r#"{"request":"take_break"}"#);
-        let back: Request = serde_json::from_str(r#"{"request":"emergency_stop"}"#).unwrap();
-        assert_eq!(back, Request::EmergencyStop);
+        let back: Request = serde_json::from_str(r#"{"request":"emergency_keep_open"}"#).unwrap();
+        assert_eq!(back, Request::EmergencyKeepOpen);
+        // An answer from an older daemon, without `emergency`, still reads.
+        let old: Response =
+            serde_json::from_str(r#"{"ok":true,"error":null,"status":null}"#).unwrap();
+        assert_eq!(old, Response::done());
     }
 
     #[tokio::test]

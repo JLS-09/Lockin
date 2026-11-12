@@ -11,7 +11,10 @@
 //!   session's block profile (`blocker.rs`) and block its websites
 //!   (`sites.rs`); on a break and after the session, unblock them;
 //! - answer the app on the socket (`lockin_core::ipc`): its status, and taking
-//!   a break, resuming or the emergency stop in the running session.
+//!   a break, resuming or the emergency stop in the running session;
+//! - every 2 seconds, look at the emergency stop: after 2 minutes kept open it
+//!   ends the session (−50 points), and it's dropped when the app stops checking
+//!   in (`lockin_core::emergency`).
 //!
 //! Only one daemon runs at a time: it holds a lock on a file next to the database.
 //! Its messages go to the terminal, or to the journal under systemd
@@ -23,6 +26,7 @@ use std::time::Duration;
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Local, Utc};
+use lockin_core::emergency::{Checked, EmergencyStop};
 use lockin_core::ipc::{self, DaemonStatus, Request, Response};
 use lockin_core::model::TickResult;
 use lockin_core::{block, db, import, now_text, paths, session};
@@ -31,11 +35,14 @@ use crate::blocker::{self, AppBlocker};
 use crate::sites::SiteBlocker;
 
 /// What every connection to the socket may read: since when the daemon runs,
-/// and why websites can't be blocked (if so). Cloning shares the same values.
+/// why websites can't be blocked (if so), and the emergency stop.
+/// Cloning shares the same values.
 #[derive(Clone)]
 struct Shared {
     started_at: String,
     websites_problem: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+    /// A tokio Mutex: it stays locked while the stop talks to the database.
+    emergency: std::sync::Arc<tokio::sync::Mutex<EmergencyStop>>,
 }
 
 impl Shared {
@@ -43,6 +50,7 @@ impl Shared {
         Shared {
             started_at,
             websites_problem: Default::default(),
+            emergency: Default::default(),
         }
     }
 
@@ -117,6 +125,7 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                 }
             }
             _ = block_ticker.tick() => {
+                check_emergency(&pool, &shared).await;
                 enforce_blocking(&pool, blocker.as_mut(), &mut sites).await;
                 if let Ok(mut problem) = shared.websites_problem.lock() {
                     problem.clone_from(&sites.problem);
@@ -212,12 +221,33 @@ async fn answer(
                 .map(|_| "break ended"),
             Err(error) => Err(error),
         },
-        Request::EmergencyStop => match running(pool).await {
-            Ok(id) => session::emergency_stop(pool, &id, now)
-                .await
-                .map(|_| "stopped with the emergency button"),
-            Err(error) => Err(error),
-        },
+        Request::EmergencyKeepOpen => {
+            let mut stop = shared.emergency.lock().await;
+            let opening = stop.status(now).is_none();
+            return match stop.keep_open(pool, now).await {
+                Ok(status) => {
+                    if status.stopped {
+                        say(&format!(
+                            "study session: stopped with the emergency button, -{} points",
+                            status.penalty_points
+                        ));
+                    } else if opening {
+                        say("study session: emergency stop opened (2 minutes to go)");
+                    }
+                    Response {
+                        emergency: Some(status),
+                        ..Response::done()
+                    }
+                }
+                Err(error) => Response::failed(error),
+            };
+        }
+        Request::EmergencyCancel => {
+            if shared.emergency.lock().await.cancel() {
+                say("study session: emergency stop closed, keep studying");
+            }
+            return Response::done();
+        }
     };
     match result {
         Ok(what) => {
@@ -225,6 +255,21 @@ async fn answer(
             Response::done()
         }
         Err(error) => Response::failed(error),
+    }
+}
+
+/// Every 2 seconds: end the session once the emergency stop was kept open for
+/// 2 minutes, or drop the stop when the app stopped checking in.
+async fn check_emergency(pool: &db::Pool, shared: &Shared) {
+    let mut stop = shared.emergency.lock().await;
+    match stop.check(pool, Utc::now()).await {
+        Ok(Checked::Nothing) => {}
+        Ok(Checked::Lapsed) => say("study session: emergency stop closed (the app stopped asking)"),
+        Ok(Checked::Stopped(_)) => say(&format!(
+            "study session: stopped with the emergency button, -{} points",
+            session::EMERGENCY_PENALTY_POINTS
+        )),
+        Err(error) => say(&format!("emergency stop: {error:#}")),
     }
 }
 
@@ -422,13 +467,11 @@ mod tests {
         let path = std::env::temp_dir().join(format!("lockin-{}.sock", lockin_core::new_id()));
         let listener = listen(&path).unwrap();
         let serving = pool.clone();
+        // One Shared for every connection, as in `run`: the emergency stop lives there.
+        let shared = Shared::new("2099-11-04T12:00:00Z".into());
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
-                tokio::spawn(answer_connection(
-                    stream,
-                    serving.clone(),
-                    Shared::new("2099-11-04T12:00:00Z".into()),
-                ));
+                tokio::spawn(answer_connection(stream, serving.clone(), shared.clone()));
             }
         });
         (pool, path)
@@ -476,8 +519,25 @@ mod tests {
             "break"
         );
         ipc::send_to(&path, &Request::Resume).await.unwrap();
-        ipc::send_to(&path, &Request::EmergencyStop).await.unwrap();
-        assert_eq!(session::get(&pool, &id).await.unwrap().status, "stopped");
+
+        // The emergency stop opens with 2 minutes to go and doesn't stop at once.
+        let response = ipc::send_to(&path, &Request::EmergencyKeepOpen)
+            .await
+            .unwrap();
+        let first = response.emergency.unwrap();
+        assert!(!first.stopped);
+        assert_eq!(first.penalty_points, 50);
+        // Checking in again keeps the same stop.
+        let again = ipc::send_to(&path, &Request::EmergencyKeepOpen)
+            .await
+            .unwrap()
+            .emergency
+            .unwrap();
+        assert_eq!(again.stops_at, first.stops_at);
+        ipc::send_to(&path, &Request::EmergencyCancel)
+            .await
+            .unwrap();
+        assert_eq!(session::get(&pool, &id).await.unwrap().status, "running");
         let _ = std::fs::remove_file(path);
     }
 }

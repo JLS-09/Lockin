@@ -241,9 +241,20 @@ export interface CurrentSession {
   creditMinutes: number;
   creditEveryMinutes: number;
   breakMinutes: number;
-  /** The emergency button: hold this long; costs these points (from step 6). */
+  /** The emergency stop: keep it open this long; it costs these points. */
   emergencyWaitSeconds: number;
   emergencyPenaltyPoints: number;
+}
+
+/** Where the emergency stop stands, from the daemon. */
+export interface EmergencyStatus {
+  /** RFC 3339 in UTC. */
+  startedAt: string;
+  /** The session ends then, if the stop stays open. */
+  stopsAt: string;
+  /** True once the daemon stopped the session (and took the points). */
+  stopped: boolean;
+  penaltyPoints: number;
 }
 
 export interface PlanResult {
@@ -412,7 +423,14 @@ export const api = {
   /** These go through the daemon; they fail when it isn't running. */
   takeBreak: () => invoke<void>("take_break"),
   resumeSession: () => invoke<void>("resume_session"),
-  emergencyStop: () => invoke<void>("emergency_stop"),
+  /** Open the emergency stop, or keep it open: call it every 2 seconds while
+   *  it's open. After 2 minutes the daemon ends the session (`stopped: true`). */
+  emergencyKeepOpen: () => invoke<EmergencyStatus>("emergency_keep_open"),
+  /** "Keep studying": close the emergency stop. */
+  emergencyCancel: () => invoke<void>("emergency_cancel"),
+  /** Points per session ("−50" on a stopped one); sessions without points are missing. */
+  sessionPoints: (sessionIds: string[]) =>
+    invoke<Record<string, number>>("session_points", { sessionIds }),
 
   blockProfiles: () => invoke<BlockProfile[]>("block_profiles"),
   /** Returns the new profile's id. */

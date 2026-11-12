@@ -16,7 +16,7 @@ use sqlx::sqlite::SqlitePool;
 use crate::model::{
     PlanResult, SessionDetails, SessionEvent, SessionState, StudySession, TickResult,
 };
-use crate::{new_id, now_text};
+use crate::{new_id, now_text, points};
 
 /// Every this many minutes studied...
 pub const CREDIT_EVERY_MINUTES: i64 = 30;
@@ -24,10 +24,10 @@ pub const CREDIT_EVERY_MINUTES: i64 = 30;
 pub const CREDIT_MINUTES: i64 = 5;
 /// One break lasts at most this long (less when there's less credit left).
 pub const BREAK_MINUTES: i64 = 5;
-/// The emergency button has to be held open this long before the session ends.
-/// The daemon enforces the wait (step 6); this is the number it uses.
+/// The emergency stop has to be kept open this long before the session ends.
+/// The daemon enforces the wait (`emergency.rs`).
 pub const EMERGENCY_WAIT_SECONDS: i64 = 120;
-/// Penalty points for the emergency button (recorded from step 6 on).
+/// Penalty points for the emergency stop, written to `points_ledger` as −50.
 pub const EMERGENCY_PENALTY_POINTS: i64 = 50;
 /// A session the daemon starts more than this long after its planned start is
 /// logged as a late start ("late"): the daemon wasn't running at its start.
@@ -649,13 +649,23 @@ pub async fn finish(pool: &SqlitePool, session_id: &str, at: DateTime<Utc>) -> R
     log(pool, session_id, "end", at, None).await
 }
 
-/// End a running session early with the emergency button: status "stopped".
-/// The two-minute wait and the penalty points come with step 6.
+/// End a running session early with the emergency button: status "stopped",
+/// and `EMERGENCY_PENALTY_POINTS` off your points.
+/// The two-minute wait comes before this, in the daemon (`emergency.rs`).
 pub async fn emergency_stop(pool: &SqlitePool, session_id: &str, now: DateTime<Utc>) -> Result<()> {
+    // Only from "running": the penalty can never be taken twice.
     if !change_status(pool, session_id, "running", "stopped").await? {
         bail!("this study session isn't running");
     }
-    log(pool, session_id, "emergency", now, None).await
+    log(pool, session_id, "emergency", now, None).await?;
+    points::add(
+        pool,
+        -EMERGENCY_PENALTY_POINTS,
+        points::REASON_EMERGENCY,
+        Some(session_id),
+        now,
+    )
+    .await
 }
 
 /// What the daemon does every few seconds:

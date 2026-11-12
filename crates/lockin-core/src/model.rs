@@ -1,7 +1,7 @@
 //! The data types used across Lockin.
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// One event read from an iCal feed, before it goes into the database.
 #[derive(Debug, Clone, PartialEq)]
@@ -375,4 +375,32 @@ pub struct BlockedNow {
     pub apps: Vec<BlockedApp>,
     /// Websites to block, as domains; empty on a break or without a profile.
     pub sites: Vec<String>,
+}
+
+/// One line of the points ledger (`points.rs`).
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PointsEntry {
+    pub id: String,
+    /// RFC 3339 in UTC.
+    pub at: String,
+    /// Earned (+) or lost (−).
+    pub points: i64,
+    /// Why, e.g. "emergency".
+    pub reason: String,
+    pub session_id: Option<String>,
+}
+
+/// Where the emergency stop stands, as the daemon answers it (`emergency.rs`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmergencyStatus {
+    /// When you opened the stop, RFC 3339 in UTC.
+    pub started_at: String,
+    /// When the session ends if you keep it open.
+    pub stops_at: String,
+    /// True once the session has been stopped (and the points taken).
+    pub stopped: bool,
+    /// The points it costs (or cost).
+    pub penalty_points: i64,
 }

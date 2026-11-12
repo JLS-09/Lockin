@@ -3,8 +3,9 @@
 
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike, Utc};
 use lockin_core::db::{self, Pool};
+use lockin_core::emergency::{Checked, EmergencyStop};
 use lockin_core::model::{SessionDetails, StudySession};
-use lockin_core::session;
+use lockin_core::{points, session};
 
 fn date(year: i32, month: u32, day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(year, month, day).unwrap()
@@ -535,6 +536,149 @@ async fn the_emergency_button_stops_a_session() {
     // A stopped session isn't ended again by the daemon.
     let result = session::tick(&pool, at(4, 16, 0)).await.unwrap();
     assert!(result.ended.is_empty());
+
+    // It cost 50 points, once: a second stop is refused and takes nothing.
+    assert_eq!(points::balance(&pool).await.unwrap(), -50);
+    assert!(
+        session::emergency_stop(&pool, &item.id, start + minutes(41))
+            .await
+            .is_err()
+    );
+    assert_eq!(points::balance(&pool).await.unwrap(), -50);
+    let lines = points::recent(&pool, 10).await.unwrap();
+    assert_eq!(lines.len(), 1);
+    assert_eq!(lines[0].reason, "emergency");
+    assert_eq!(lines[0].session_id.as_deref(), Some(item.id.as_str()));
+    let per_session = points::for_sessions(&pool, std::slice::from_ref(&item.id))
+        .await
+        .unwrap();
+    assert_eq!(per_session.get(&item.id), Some(&-50));
+}
+
+fn seconds(count: i64) -> Duration {
+    Duration::seconds(count)
+}
+
+/// A session running since Wed 13:00, and the emergency stop of a fresh daemon.
+async fn running_session(pool: &Pool) -> (StudySession, EmergencyStop) {
+    let item = wednesday_session(pool).await;
+    session::start(pool, &item.id, at(4, 13, 0), None)
+        .await
+        .unwrap();
+    (item, EmergencyStop::default())
+}
+
+#[tokio::test]
+async fn the_emergency_stop_waits_two_minutes() {
+    let pool = empty_database().await;
+    let (item, mut stop) = running_session(&pool).await;
+    let opened = at(4, 14, 0);
+
+    let first = stop.keep_open(&pool, opened).await.unwrap();
+    assert!(!first.stopped);
+    assert_eq!(first.penalty_points, 50);
+    assert_eq!(
+        DateTime::parse_from_rfc3339(&first.stops_at).unwrap(),
+        opened + seconds(120)
+    );
+    // Checking in every 2 seconds keeps the same stop going.
+    let mut now = opened;
+    while now < opened + seconds(118) {
+        now += seconds(2);
+        let answer = stop.keep_open(&pool, now).await.unwrap();
+        assert!(!answer.stopped, "stopped early at {now}");
+        assert_eq!(answer.started_at, first.started_at);
+        assert_eq!(stop.check(&pool, now).await.unwrap(), Checked::Nothing);
+    }
+    assert_eq!(
+        session::get(&pool, &item.id).await.unwrap().status,
+        "running"
+    );
+
+    // At 2:00 the check-in stops it.
+    let last = stop.keep_open(&pool, opened + seconds(120)).await.unwrap();
+    assert!(last.stopped);
+    assert_eq!(
+        session::get(&pool, &item.id).await.unwrap().status,
+        "stopped"
+    );
+    assert_eq!(points::balance(&pool).await.unwrap(), -50);
+    assert!(stop.status(opened + seconds(121)).is_none());
+}
+
+#[tokio::test]
+async fn the_daemon_stops_it_without_a_last_check_in() {
+    let pool = empty_database().await;
+    let (item, mut stop) = running_session(&pool).await;
+    let opened = at(4, 14, 0);
+    // Check-ins every 2 seconds, the last one at 1:56.
+    for second in (0..=116).step_by(2) {
+        stop.keep_open(&pool, opened + seconds(second))
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        stop.check(&pool, opened + seconds(121)).await.unwrap(),
+        Checked::Stopped(item.id.clone())
+    );
+    assert_eq!(
+        session::get(&pool, &item.id).await.unwrap().status,
+        "stopped"
+    );
+}
+
+#[tokio::test]
+async fn closing_the_stop_starts_the_wait_again() {
+    let pool = empty_database().await;
+    let (item, mut stop) = running_session(&pool).await;
+    let opened = at(4, 14, 0);
+
+    // "Keep studying" closes it; opening again starts from 2:00.
+    stop.keep_open(&pool, opened).await.unwrap();
+    assert!(stop.cancel());
+    assert!(!stop.cancel());
+    let again = stop.keep_open(&pool, opened + seconds(100)).await.unwrap();
+    assert_eq!(
+        DateTime::parse_from_rfc3339(&again.stops_at).unwrap(),
+        opened + seconds(220)
+    );
+
+    // Leaving the page: no check-ins for more than 10 seconds drops it.
+    assert_eq!(
+        stop.check(&pool, opened + seconds(111)).await.unwrap(),
+        Checked::Lapsed
+    );
+    assert!(stop.status(opened + seconds(111)).is_none());
+    // Coming back much later doesn't stop it at once: the wait starts again.
+    let later = stop.keep_open(&pool, opened + seconds(300)).await.unwrap();
+    assert!(!later.stopped);
+    assert_eq!(
+        DateTime::parse_from_rfc3339(&later.stops_at).unwrap(),
+        opened + seconds(420)
+    );
+    assert_eq!(
+        session::get(&pool, &item.id).await.unwrap().status,
+        "running"
+    );
+    assert_eq!(points::balance(&pool).await.unwrap(), 0);
+}
+
+#[tokio::test]
+async fn the_stop_needs_a_running_session() {
+    let pool = empty_database().await;
+    let (item, mut stop) = running_session(&pool).await;
+    stop.keep_open(&pool, at(4, 15, 30) - seconds(5))
+        .await
+        .unwrap();
+    // The session reaches its planned end while the stop is open: no penalty.
+    session::tick(&pool, at(4, 15, 30)).await.unwrap();
+    assert_eq!(
+        stop.check(&pool, at(4, 15, 30)).await.unwrap(),
+        Checked::Nothing
+    );
+    assert!(stop.keep_open(&pool, at(4, 15, 31)).await.is_err());
+    assert_eq!(session::get(&pool, &item.id).await.unwrap().status, "done");
+    assert_eq!(points::balance(&pool).await.unwrap(), 0);
 }
 
 #[tokio::test]

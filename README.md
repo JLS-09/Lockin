@@ -44,7 +44,8 @@ study sessions that block distracting apps and websites.
   the semester. A background daemon (systemd user service) starts and ends them on time,
   also when the app is closed, and syncs the feeds every hour. The Session page shows the
   running session with its timer, break credit (5 min per 30 min studied, B takes a
-  break), its log and an emergency stop you hold open for two minutes
+  break), its log and an emergency stop: keep it open for two minutes and the daemon
+  ends the session, for 50 penalty points (closing it or leaving the page cancels it)
 - **Blocking apps and websites:** your own block profiles (Settings → Block profiles,
   e.g. "Strict" and "Light"), with apps picked from your menu (Flatpaks too) or added by
   program name, and websites. While you study, the daemon closes the apps and blocks the
@@ -52,7 +53,7 @@ study sessions that block distracting apps and websites.
 
 **Planned**
 
-- **Penalty points** for the emergency button, tray icon and notifications (phase 4)
+- **Tray icon and notifications** (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
@@ -207,6 +208,8 @@ cargo run -p lockin-daemon -- plan-session "2026-11-18 13:00" 15:30 "Exercises" 
 cargo run -p lockin-daemon -- plan-weekly "2026-11-18 13:00" 15:30 "Exercises"   # every week, to the end of the semester
 cargo run -p lockin-daemon -- sessions                    # last week's and the coming study sessions
 cargo run -p lockin-daemon -- session-status              # the running session: study time, break credit
+cargo run -p lockin-daemon -- emergency-stop              # through the daemon: keep it running 2 min (Ctrl+C cancels)
+cargo run -p lockin-daemon -- points                      # your points and the latest changes
 cargo run -p lockin-daemon -- add-profile Strict          # a block profile
 cargo run -p lockin-daemon -- block Strict discord        # add an app (see installed-apps) or a program name
 cargo run -p lockin-daemon -- block-site Strict youtube.com  # add a website
@@ -215,7 +218,7 @@ cargo run -p lockin-daemon -- block-site Strict youtube.com  # add a website
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
 `remove-feed`, `keep-block` / `ignore-block` / `reset-block` for a manual exception per block,
 `deadlines` / `done-deadline` / `remove-deadline`, and for study sessions `remove-session`,
-`remove-following`, `break`, `resume`, `emergency-stop` and `tick` (what the running daemon
+`remove-following`, `break`, `resume` and `tick` (what the running daemon
 does every few seconds), and `profiles`, `installed-apps` and `find-process <name>` (what
 the daemon sees of a running app, and whether a profile blocks it) for blocking.
 

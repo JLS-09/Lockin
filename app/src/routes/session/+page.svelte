@@ -2,16 +2,17 @@
   // The Session page, following the Session mockup while a session runs: the
   // timer with its progress bar (breaks in orange), the break credit (B takes a
   // break), the session's log and "Need to stop?" with the emergency stop,
-  // which you hold open for two minutes. The daemon runs the session; this page
-  // shows it and asks the daemon for a break, a resume or the stop.
-  // "Blocked right now" lists the profile's apps and how often the daemon closed
-  // one ("Blocking paused" during a break). Points, streak and the Lockling follow
-  // in phase 6, websites on the profile in step 5.
+  // which you keep open for two minutes. The daemon runs the session and the
+  // stop's wait (`live.openEmergency`); this page shows it and asks the daemon
+  // for a break, a resume or the stop. Leaving the page closes the stop.
+  // "Blocked right now" lists the profile's apps and websites, and how often the
+  // daemon closed an app ("Blocking paused" during a break). Points, streak and
+  // the Lockling follow in phase 6.
   //
   // Without a running session (not in the mockups, built from the same cards):
   // the next session, the coming two weeks and the last seven days.
   // Keys: N plans a session, B takes or ends a break, Escape cancels the emergency stop.
-  import { untrack } from "svelte";
+  import { onDestroy, untrack } from "svelte";
 
   import { api, type AppCloses, type BlockProfile, type SessionEvent, type StudySession } from "$lib/api";
   import SessionDialog from "$lib/components/SessionDialog.svelte";
@@ -44,8 +45,8 @@
 
   /** At most this many app chips; the rest is "+3 more". */
   const MAX_CHIPS = 6;
-  /** When the emergency stop was started (ms); null when not holding. */
-  let stopStartedAt = $state<number | null>(null);
+  /** Points per session in the last 7 days ("−50 points" on a stopped one). */
+  let sessionPoints = $state<Record<string, number>>({});
 
   const running = $derived(live.current);
   const current = $derived(running?.state);
@@ -141,6 +142,25 @@
       .reverse(),
   );
 
+  // The points of the recent sessions, read again when the list changes.
+  const recentIds = $derived(recent.map((s) => s.id).join(" "));
+  $effect(() => {
+    const ids = recentIds ? recentIds.split(" ") : [];
+    api
+      .sessionPoints(ids)
+      .then((found) => (sessionPoints = found))
+      .catch((e) => (error = String(e)));
+  });
+
+  /** "Stopped early · −50 points", or just the status. */
+  function recentState(item: StudySession): string {
+    const label = t(statusLabels[item.status]);
+    const points = sessionPoints[item.id];
+    if (points === undefined) return label;
+    const signed = points < 0 ? `−${-points}` : `+${points}`;
+    return `${label} · ${t("session.pointsChange", { points: signed })}`;
+  }
+
   // ---------- The running session ----------
 
   const totalSeconds = $derived(
@@ -229,23 +249,28 @@
   }
 
   // ---------- Emergency stop ----------
+  // The daemon counts the two minutes and ends the session; the page only
+  // shows the countdown from the daemon's `stopsAt`.
 
   const stopWait = $derived(running?.emergencyWaitSeconds ?? 120);
   const stopSecondsLeft = $derived(
-    stopStartedAt === null ? stopWait : Math.max(0, stopWait - (live.now.getTime() - stopStartedAt) / 1000),
+    live.emergency
+      ? Math.max(0, (new Date(live.emergency.stopsAt).getTime() - live.now.getTime()) / 1000)
+      : stopWait,
   );
 
-  // After the wait, the session ends. Leaving the page cancels the hold.
-  $effect(() => {
-    if (stopStartedAt !== null && stopSecondsLeft <= 0) {
-      stopStartedAt = null;
-      untrack(() => live.emergencyStop());
-    }
-  });
+  // Leaving the page closes the stop: it has to be kept open on purpose.
+  onDestroy(() => live.cancelEmergency());
 
-  // No running session (ended, or stopped elsewhere): nothing to hold any more.
+  // The daemon ended the session: say what it cost.
   $effect(() => {
-    if (!running) stopStartedAt = null;
+    const stopped = live.stoppedByEmergency;
+    if (!stopped) return;
+    notice = t("session.stoppedNotice", { points: stopped.penaltyPoints });
+    untrack(() => {
+      live.stoppedByEmergency = null;
+      loadSessions();
+    });
   });
 
   // ---------- Planning ----------
@@ -298,7 +323,7 @@
     if (sessionDialog?.isOpen()) return;
     if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable]")) return;
     if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === "Escape" && stopStartedAt !== null) stopStartedAt = null;
+    if (event.key === "Escape" && live.emergency) live.cancelEmergency();
     else if ((event.key === "b" || event.key === "B") && running) toggleBreak();
     else if (event.key === "n" || event.key === "N") plan();
     else return;
@@ -475,9 +500,11 @@
 
       <section class="card stop" aria-labelledby="stop-heading">
         <h2 id="stop-heading">{t("session.needStop")}</h2>
-        {#if stopStartedAt === null}
+        {#if !live.emergency}
           <p class="sub">{t("session.stopCost", { minutes: Math.round(stopWait / 60) })}</p>
-          <button class="btn btn-danger" onclick={() => (stopStartedAt = Date.now())}>{t("session.emergency")}</button>
+          <button class="btn btn-danger" disabled={!live.daemon} onclick={() => live.openEmergency()}>
+            {t("session.emergency")}
+          </button>
         {:else}
           <p>
             {t("session.confirmStop1", { minutes: Math.round(stopWait / 60) })}
@@ -487,8 +514,10 @@
             <span style:transform="scaleX({1 - stopSecondsLeft / stopWait})"></span>
           </div>
           <div class="stop-foot">
-            <span class="sub tabular">{t("session.toGo", { time: clockText(stopSecondsLeft) })}</span>
-            <button class="btn btn-primary" onclick={() => (stopStartedAt = null)}>{t("session.keepStudying")}</button>
+            <span class="sub tabular">
+              {stopSecondsLeft > 0 ? t("session.toGo", { time: clockText(stopSecondsLeft) }) : t("session.stopping")}
+            </span>
+            <button class="btn btn-primary" onclick={() => live.cancelEmergency()}>{t("session.keepStudying")}</button>
           </div>
         {/if}
       </section>
@@ -564,7 +593,7 @@
                 <span class="ellipsis">{sessionAbout(item, courseById) || t("session.untitled")}</span>
                 <span class="line-sub">{formatDay(new Date(item.startAt))} · {sessionTimes(item)}</span>
               </span>
-              <span class="state {item.status}">{t(statusLabels[item.status])}</span>
+              <span class="state {item.status}">{recentState(item)}</span>
             </li>
           {/each}
         </ul>

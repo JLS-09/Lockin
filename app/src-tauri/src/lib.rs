@@ -8,15 +8,17 @@
 //! Tauri turns snake_case argument names into camelCase on the JavaScript side:
 //! `block_id` here is `blockId` in `invoke`.
 
+use std::collections::HashMap;
+
 use chrono::{DateTime, Local, NaiveDate, Utc};
 use lockin_core::apps::{self, InstalledApp};
 use lockin_core::ipc::{self, DaemonStatus, Request};
 use lockin_core::model::{
     Activity, ActivityTemplate, AppCloses, BlockProfile, ClassBlock, Course, CourseKind, Deadline,
-    FeedInfo, FeedSync, FilterRule, HistoryImport, PlanResult, SessionDetails, SessionEvent,
-    SessionState, StudySession, UrgentItem, WeekClasses, WeekProgress,
+    EmergencyStatus, FeedInfo, FeedSync, FilterRule, HistoryImport, PlanResult, SessionDetails,
+    SessionEvent, SessionState, StudySession, UrgentItem, WeekClasses, WeekProgress,
 };
-use lockin_core::{activity, block, db, deadline, import, paths, session, urgent};
+use lockin_core::{activity, block, db, deadline, import, paths, points, session, urgent};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -634,12 +636,36 @@ async fn resume_session() -> CommandResult<()> {
         .map_err(message)
 }
 
-/// Ask the daemon to end the running session now (the emergency button).
+/// Open the emergency stop or keep it open. The Session page sends this every
+/// 2 seconds while the stop is open; after 2 minutes the daemon ends the session.
 #[tauri::command]
-async fn emergency_stop() -> CommandResult<()> {
-    ipc::send(&Request::EmergencyStop)
+async fn emergency_keep_open() -> CommandResult<EmergencyStatus> {
+    let response = ipc::send(&Request::EmergencyKeepOpen)
+        .await
+        .map_err(message)?;
+    response
+        .emergency
+        .ok_or_else(|| "the daemon didn't say where the emergency stop stands".to_string())
+}
+
+/// "Keep studying": close the emergency stop.
+#[tauri::command]
+async fn emergency_cancel() -> CommandResult<()> {
+    ipc::send(&Request::EmergencyCancel)
         .await
         .map(|_| ())
+        .map_err(message)
+}
+
+/// The points each of these sessions cost or earned ("−50 points" on a
+/// stopped one); sessions without points are left out.
+#[tauri::command]
+async fn session_points(
+    pool: State<'_, db::Pool>,
+    session_ids: Vec<String>,
+) -> CommandResult<HashMap<String, i64>> {
+    points::for_sessions(&pool, &session_ids)
+        .await
         .map_err(message)
 }
 
@@ -735,7 +761,9 @@ pub fn run() {
             daemon_status,
             take_break,
             resume_session,
-            emergency_stop,
+            emergency_keep_open,
+            emergency_cancel,
+            session_points,
             last_profile,
             block_profiles,
             add_block_profile,

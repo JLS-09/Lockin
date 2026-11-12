@@ -7,8 +7,9 @@ mod sites;
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use lockin_core::ipc::{self, Request};
 use lockin_core::model::{FeedEvent, FeedSync, SessionDetails, StudySession};
-use lockin_core::{block, db, deadline, import, paths, session, timeedit, urgent};
+use lockin_core::{block, db, deadline, import, paths, points, session, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
 
@@ -55,7 +56,9 @@ const USAGE: &str = "usage: lockin-daemon <command>
                            start, end or mark missed the sessions that are due
   break                    take a break in the running session (needs credit)
   resume                   end the break
-  emergency-stop           end the running session now
+  emergency-stop           end the running session through the daemon: keep it
+                           running for 2 minutes (Ctrl+C keeps studying); -50 points
+  points                   your points and the latest changes to them
 
   profiles                 the block profiles and their apps
   add-profile <name>       make a block profile, e.g. Strict
@@ -80,7 +83,7 @@ async fn main() -> Result<()> {
     match (command, argument) {
         (Some("run"), _) => service::run(pool).await?,
         (Some("status"), _) => {
-            let response = lockin_core::ipc::send(&lockin_core::ipc::Request::Status).await?;
+            let response = ipc::send(&Request::Status).await?;
             if let Some(status) = response.status {
                 let since = chrono::DateTime::parse_from_rfc3339(&status.started_at)?;
                 print!(
@@ -342,11 +345,8 @@ async fn main() -> Result<()> {
             session::resume(&pool, &running.id, Utc::now(), None).await?;
             show_session_status(&pool).await?;
         }
-        (Some("emergency-stop"), _) => {
-            let running = running_session(&pool).await?;
-            session::emergency_stop(&pool, &running.id, Utc::now()).await?;
-            println!("Study session stopped.");
-        }
+        (Some("emergency-stop"), _) => emergency_stop().await?,
+        (Some("points"), _) => show_points(&pool).await?,
         _ => bail!(USAGE),
     }
 
@@ -707,6 +707,65 @@ async fn running_session(pool: &db::Pool) -> Result<StudySession> {
         Some(running) => Ok(running),
         None => bail!("no study session is running"),
     }
+}
+
+/// The emergency stop from the terminal, the same way the app does it: the
+/// daemon has to be asked every 2 seconds for 2 minutes, then it ends the
+/// session. Ctrl+C closes the stop again.
+async fn emergency_stop() -> Result<()> {
+    use std::io::Write;
+
+    println!(
+        "Keep this running for {} minutes to end the session. It costs {} points.",
+        session::EMERGENCY_WAIT_SECONDS / 60,
+        session::EMERGENCY_PENALTY_POINTS
+    );
+    println!("Press Ctrl+C to keep studying.");
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
+    loop {
+        let response = ipc::send(&Request::EmergencyKeepOpen).await?;
+        let Some(status) = response.emergency else {
+            bail!("the daemon didn't say where the emergency stop stands");
+        };
+        if status.stopped {
+            println!(
+                "\rStudy session stopped: -{} points.        ",
+                status.penalty_points
+            );
+            return Ok(());
+        }
+        let stops_at = chrono::DateTime::parse_from_rfc3339(&status.stops_at)?;
+        // Rounded up, so it starts at 2:00.
+        let left_ms = (stops_at.with_timezone(&Utc) - Utc::now()).num_milliseconds();
+        let left = (left_ms.max(0) + 999) / 1000;
+        print!("\r{}:{:02} to go ", left / 60, left % 60);
+        std::io::stdout().flush()?;
+
+        tokio::select! {
+            _ = &mut ctrl_c => {
+                ipc::send(&Request::EmergencyCancel).await?;
+                println!("\rEmergency stop closed. Keep studying!");
+                return Ok(());
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => {}
+        }
+    }
+}
+
+/// Your points and the last changes to them.
+async fn show_points(pool: &db::Pool) -> Result<()> {
+    println!("{} points", points::balance(pool).await?);
+    for line in points::recent(pool, 10).await? {
+        let at = chrono::DateTime::parse_from_rfc3339(&line.at)?;
+        println!(
+            "  {}  {:+}  {}",
+            at.with_timezone(&Local).format("%a %d %b %H:%M"),
+            line.points,
+            line.reason
+        );
+    }
+    Ok(())
 }
 
 async fn show_sessions(pool: &db::Pool) -> Result<()> {
