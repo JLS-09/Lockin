@@ -20,6 +20,7 @@
     api,
     isIgnored,
     type Activity,
+    type BlockProfile,
     type ClassBlock,
     type Deadline,
     type StudySession,
@@ -65,6 +66,17 @@
   let weekPanel = $state<WeekPanel>();
   let deadlineDialog = $state<DeadlineDialog>();
   let sessionDialog = $state<SessionDialog>();
+  // Block profiles, for the dialog and the "· Strict" on sessions.
+  let profiles = $state<BlockProfile[]>([]);
+  let lastProfile = $state<string | null>(null);
+  async function loadProfiles() {
+    try {
+      [profiles, lastProfile] = await Promise.all([api.blockProfiles(), api.lastProfile()]);
+    } catch (e) {
+      data.error = String(e);
+    }
+  }
+  loadProfiles();
 
   // "/?date=2026-10-26" opens that week (the semester overview links here like
   // that); "&block=<id>" also opens that class's panel (the Urgent list does).
@@ -243,6 +255,7 @@
     try {
       const result = await saveSession(id, fields);
       await data.loadSessions();
+      lastProfile = fields.profileId ?? lastProfile;
       if (fields.weekly) {
         const text =
           result.overlapping > 0
@@ -432,6 +445,7 @@
               onShowAnyway={(block) => data.showAnyway(block)}
               onOpenDeadline={openDeadline}
               onOpenSession={openSession}
+              {profiles}
             />
           </div>
         {/key}
@@ -506,6 +520,8 @@
 <SessionDialog
   bind:this={sessionDialog}
   courses={data.courses}
+  {profiles}
+  defaultProfileId={lastProfile}
   onSave={saveFromDialog}
   onDelete={removeSession}
   onDeleteFollowing={removeFollowing}

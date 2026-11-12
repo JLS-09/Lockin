@@ -2,6 +2,8 @@
 //! data model, database access, schedule import, deadlines and (later) sync.
 
 pub mod activity;
+pub mod apps;
+pub mod block;
 pub mod db;
 pub mod deadline;
 pub mod filter;

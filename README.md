@@ -12,7 +12,7 @@ study sessions that block distracting apps and websites.
 > **Status:** phases 1 to 3 of 6 are done: the TimeEdit import, the class tracking app
 > (week view, activities, templates, semester overview) and deadlines (by hand and from
 > Ufora, with the Urgent list) work. Phase 4 is under way: study sessions run, with the
-> daemon as a service; blocking apps and websites comes next. Built first for CachyOS with
+> daemon as a service, and close the apps on your block profile; websites come next. Built first for CachyOS with
 > KDE Plasma, with Windows and macOS support planned later.
 
 ## Features
@@ -45,10 +45,13 @@ study sessions that block distracting apps and websites.
   also when the app is closed, and syncs the feeds every hour. The Session page shows the
   running session with its timer, break credit (5 min per 30 min studied, B takes a
   break), its log and an emergency stop you hold open for two minutes
+- **Blocking apps:** your own block profiles (Settings → Block profiles, e.g. "Strict"
+  and "Light"), with apps picked from your menu (Flatpaks too) or added by program name.
+  While you study, the daemon closes them; breaks pause it
 
 **Planned**
 
-- **Blocking** of apps and websites during study sessions, penalty points, tray icon and
+- **Blocking websites** during study sessions, penalty points, tray icon and
   notifications (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
@@ -190,13 +193,15 @@ cargo run -p lockin-daemon -- plan-session "2026-11-18 13:00" 15:30 "Exercises" 
 cargo run -p lockin-daemon -- plan-weekly "2026-11-18 13:00" 15:30 "Exercises"   # every week, to the end of the semester
 cargo run -p lockin-daemon -- sessions                    # last week's and the coming study sessions
 cargo run -p lockin-daemon -- session-status              # the running session: study time, break credit
+cargo run -p lockin-daemon -- add-profile Strict          # a block profile
+cargo run -p lockin-daemon -- block Strict discord        # add an app (see installed-apps) or a program name
 ```
 
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
 `remove-feed`, `keep-block` / `ignore-block` / `reset-block` for a manual exception per block,
 `deadlines` / `done-deadline` / `remove-deadline`, and for study sessions `remove-session`,
 `remove-following`, `break`, `resume`, `emergency-stop` and `tick` (what the running daemon
-does every few seconds).
+does every few seconds), and `profiles` and `installed-apps` for blocking.
 
 ## Development
 

@@ -249,6 +249,16 @@ pub struct StudySession {
     pub end_at: String,
     /// "planned", "running", "done", "stopped", "missed" or "skipped".
     pub status: String,
+    /// The block profile it closes apps with; None = blocks nothing.
+    pub profile_id: Option<String>,
+}
+
+/// What a session is about, apart from its times: given when planning or changing one.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SessionDetails {
+    pub course_id: Option<String>,
+    pub title: Option<String>,
+    pub profile_id: Option<String>,
 }
 
 /// One line of a session's log: start, break, resume, emergency or end.
@@ -308,4 +318,40 @@ pub struct TickResult {
     pub resumed: Vec<String>,
     /// Sessions whose start passed while the daemon wasn't running.
     pub missed: Vec<String>,
+}
+
+/// An app on a block profile. `exec_names` holds one program name per line.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedApp {
+    pub id: String,
+    pub profile_id: String,
+    /// The desktop file id, or "program:<name>" for a program added by name.
+    pub app_id: String,
+    /// As shown, e.g. "Discord".
+    pub name: String,
+    pub exec_names: String,
+    pub flatpak_id: Option<String>,
+}
+
+/// A block profile with its apps, e.g. "Strict": Discord, Steam, Spotify.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockProfile {
+    pub id: String,
+    pub name: String,
+    pub apps: Vec<BlockedApp>,
+    /// True while the running session blocks with it: then apps can be added, not removed.
+    pub in_use: bool,
+}
+
+/// How often the daemon closed one app during a session.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppCloses {
+    pub app_id: String,
+    pub name: String,
+    pub count: i64,
+    /// The last time, RFC 3339 in UTC.
+    pub last_at: String,
 }

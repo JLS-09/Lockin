@@ -3,7 +3,7 @@
 
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveTime, Timelike, Utc};
 use lockin_core::db::{self, Pool};
-use lockin_core::model::StudySession;
+use lockin_core::model::{SessionDetails, StudySession};
 use lockin_core::session;
 
 fn date(year: i32, month: u32, day: u32) -> NaiveDate {
@@ -24,6 +24,14 @@ fn monday() -> DateTime<Utc> {
     at(2, 9, 0)
 }
 
+/// A session with this title and nothing else.
+fn about(title: Option<&str>) -> SessionDetails {
+    SessionDetails {
+        title: title.map(String::from),
+        ..Default::default()
+    }
+}
+
 fn minutes(count: i64) -> Duration {
     Duration::minutes(count)
 }
@@ -36,8 +44,7 @@ async fn empty_database() -> Pool {
 async fn wednesday_session(pool: &Pool) -> StudySession {
     let id = session::plan(
         pool,
-        None,
-        Some("Exercises"),
+        &about(Some("Exercises")),
         at(4, 13, 0),
         at(4, 15, 30),
         monday(),
@@ -71,7 +78,8 @@ async fn planning_checks_the_times() {
     assert_eq!(session.status, "planned");
     assert_eq!(session.title.as_deref(), Some("Exercises"));
 
-    let plan = |start, end| session::plan(&pool, None, None, start, end, monday());
+    let nothing = SessionDetails::default();
+    let plan = |start, end| session::plan(&pool, &nothing, start, end, monday());
     // Ends before it starts, in the past, too long.
     assert!(plan(at(5, 13, 0), at(5, 12, 0)).await.is_err());
     assert!(plan(at(1, 13, 0), at(1, 14, 0)).await.is_err());
@@ -88,8 +96,7 @@ async fn a_blank_title_is_no_title() {
     let pool = empty_database().await;
     let id = session::plan(
         &pool,
-        None,
-        Some("  "),
+        &about(Some("  ")),
         at(4, 13, 0),
         at(4, 14, 0),
         monday(),
@@ -103,14 +110,19 @@ async fn a_blank_title_is_no_title() {
 async fn weekly_repeat_runs_to_the_end_of_the_semester() {
     let pool = empty_database().await;
     // A one-off session in the way on Wed 18 Nov.
-    session::plan(&pool, None, None, at(18, 14, 0), at(18, 15, 0), monday())
-        .await
-        .unwrap();
+    session::plan(
+        &pool,
+        &SessionDetails::default(),
+        at(18, 14, 0),
+        at(18, 15, 0),
+        monday(),
+    )
+    .await
+    .unwrap();
 
     let result = session::plan_weekly(
         &pool,
-        None,
-        Some("Databanken"),
+        &about(Some("Databanken")),
         date(2099, 11, 4),
         clock(13, 0),
         clock(15, 30),
@@ -145,8 +157,7 @@ async fn weekly_repeat_keeps_the_local_time_when_the_clock_changes() {
     // Wednesdays 10 March to 14 April 2100: the clock goes forward on 28 March.
     let result = session::plan_weekly(
         &pool,
-        None,
-        None,
+        &SessionDetails::default(),
         date(2100, 3, 10),
         clock(13, 0),
         clock(14, 0),
@@ -171,11 +182,11 @@ async fn weekly_repeat_keeps_the_local_time_when_the_clock_changes() {
 #[tokio::test]
 async fn weekly_repeat_needs_a_future_start_and_room() {
     let pool = empty_database().await;
+    let nothing = SessionDetails::default();
     let weekly = |first, until| {
         session::plan_weekly(
             &pool,
-            None,
-            None,
+            &nothing,
             first,
             clock(13, 0),
             clock(14, 0),
@@ -210,8 +221,7 @@ async fn only_sessions_still_to_come_can_change() {
     session::update(
         &pool,
         &item.id,
-        None,
-        Some("Review"),
+        &about(Some("Review")),
         at(4, 14, 0),
         at(4, 16, 0),
         monday(),
@@ -234,8 +244,7 @@ async fn only_sessions_still_to_come_can_change() {
         session::update(
             &pool,
             &item.id,
-            None,
-            None,
+            &SessionDetails::default(),
             at(4, 15, 0),
             at(4, 16, 0),
             later
@@ -269,9 +278,15 @@ async fn removing_and_bringing_back() {
 
     // Another session took its time: it can't come back.
     session::remove(&pool, &item.id, monday()).await.unwrap();
-    session::plan(&pool, None, None, at(4, 13, 0), at(4, 14, 0), monday())
-        .await
-        .unwrap();
+    session::plan(
+        &pool,
+        &SessionDetails::default(),
+        at(4, 13, 0),
+        at(4, 14, 0),
+        monday(),
+    )
+    .await
+    .unwrap();
     assert!(session::restore(&pool, &item.id, monday()).await.is_err());
 }
 
@@ -280,8 +295,7 @@ async fn removing_this_and_following_weeks() {
     let pool = empty_database().await;
     session::plan_weekly(
         &pool,
-        None,
-        None,
+        &SessionDetails::default(),
         date(2099, 11, 4),
         clock(13, 0),
         clock(14, 0),
@@ -528,9 +542,15 @@ async fn next_is_the_first_planned_session() {
     let pool = empty_database().await;
     assert!(session::next(&pool, monday()).await.unwrap().is_none());
     let item = wednesday_session(&pool).await;
-    session::plan(&pool, None, None, at(5, 9, 0), at(5, 10, 0), monday())
-        .await
-        .unwrap();
+    session::plan(
+        &pool,
+        &SessionDetails::default(),
+        at(5, 9, 0),
+        at(5, 10, 0),
+        monday(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         session::next(&pool, monday()).await.unwrap().unwrap().id,
         item.id

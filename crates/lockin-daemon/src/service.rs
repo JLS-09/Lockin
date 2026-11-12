@@ -7,6 +7,8 @@
 //!   (`import::sync_all`), in the background so a slow download never holds
 //!   up a session.
 //!
+//! - every 2 seconds while you study (not on a break), close the apps on the
+//!   session's block profile (`blocker.rs`);
 //! - answer the app on the socket (`lockin_core::ipc`): its status, and taking
 //!   a break, resuming or the emergency stop in the running session.
 //!
@@ -22,7 +24,9 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Local, Utc};
 use lockin_core::ipc::{self, DaemonStatus, Request, Response};
 use lockin_core::model::TickResult;
-use lockin_core::{db, import, now_text, paths, session};
+use lockin_core::{block, db, import, now_text, paths, session};
+
+use crate::blocker::{self, AppBlocker};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::task::JoinHandle;
@@ -30,6 +34,8 @@ use tokio::time::MissedTickBehavior;
 
 /// How often the daemon looks at the study sessions.
 pub const TICK_SECONDS: u64 = 5;
+/// How often the daemon looks for blocked apps while you study.
+pub const BLOCK_SECONDS: u64 = 2;
 /// After a failed sync (offline, say), wait this long before trying again.
 pub const SYNC_RETRY_MINUTES: i64 = 10;
 
@@ -49,6 +55,9 @@ pub async fn run(pool: db::Pool) -> Result<()> {
     let mut ticker = tokio::time::interval(Duration::from_secs(TICK_SECONDS));
     // After a suspend, tick once and carry on; don't catch up on every missed tick.
     ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut block_ticker = tokio::time::interval(Duration::from_secs(BLOCK_SECONDS));
+    block_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let mut blocker = blocker::for_this_system();
 
     let mut syncing: Option<JoinHandle<()>> = None;
     let mut last_sync_attempt: Option<DateTime<Utc>> = None;
@@ -72,6 +81,9 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                     last_sync_attempt = Some(now);
                     syncing = Some(tokio::spawn(sync(pool.clone())));
                 }
+            }
+            _ = block_ticker.tick() => {
+                close_blocked_apps(&pool, blocker.as_mut()).await;
             }
             accepted = listener.accept() => {
                 if let Ok((stream, _)) = accepted {
@@ -183,6 +195,32 @@ async fn running(pool: &db::Pool) -> Result<String> {
     match session::running(pool).await? {
         Some(running) => Ok(running.id),
         None => bail!("no study session is running"),
+    }
+}
+
+/// Close the blocked apps of the running session (nothing on a break), and
+/// write down each close for the Session page.
+async fn close_blocked_apps(pool: &db::Pool, blocker: &mut dyn AppBlocker) {
+    let now = Utc::now();
+    let (session_id, apps) = match block::blocked_now(pool, now).await {
+        Ok(found) => found,
+        Err(error) => {
+            say(&format!("blocking: {error:#}"));
+            return;
+        }
+    };
+    let closed = blocker.close(&apps);
+    let Some(session_id) = session_id else {
+        return;
+    };
+    for app in closed {
+        say(&format!(
+            "closed {} (blocked during this session)",
+            app.name
+        ));
+        if let Err(error) = block::record_close(pool, &session_id, &app, now).await {
+            say(&format!("blocking: {error:#}"));
+        }
     }
 }
 
@@ -320,6 +358,7 @@ fn say(message: &str) {
 mod tests {
     use super::*;
     use lockin_core::ipc;
+    use lockin_core::model::SessionDetails;
 
     /// A daemon's socket on a test database, answering until the test ends.
     async fn test_daemon() -> (db::Pool, std::path::PathBuf) {
@@ -360,8 +399,7 @@ mod tests {
         let now = Utc::now();
         let id = session::plan(
             &pool,
-            None,
-            None,
+            &SessionDetails::default(),
             now + chrono::Duration::minutes(1),
             now + chrono::Duration::hours(2),
             now,

@@ -13,7 +13,9 @@ use anyhow::{Result, bail};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use sqlx::sqlite::SqlitePool;
 
-use crate::model::{PlanResult, SessionEvent, SessionState, StudySession, TickResult};
+use crate::model::{
+    PlanResult, SessionDetails, SessionEvent, SessionState, StudySession, TickResult,
+};
 use crate::{new_id, now_text};
 
 /// Every this many minutes studied...
@@ -34,7 +36,7 @@ pub const START_GRACE_SECONDS: i64 = 60;
 pub const MAX_SESSION_HOURS: i64 = 12;
 
 /// The columns every session query reads, in the order of `StudySession`.
-const COLUMNS: &str = "id, series_id, course_id, title, start_at, end_at, status";
+const COLUMNS: &str = "id, series_id, course_id, title, start_at, end_at, status, profile_id";
 
 /// RFC 3339 text in UTC with seconds, the format every time is stored in.
 fn time_text(time: DateTime<Utc>) -> String {
@@ -127,11 +129,10 @@ fn overlap_message(other: &StudySession) -> String {
     }
 }
 
-/// Plan one session. The course and title are optional. Returns its id.
+/// Plan one session. Course, title and block profile are all optional. Returns its id.
 pub async fn plan(
     pool: &SqlitePool,
-    course_id: Option<&str>,
-    title: Option<&str>,
+    details: &SessionDetails,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     now: DateTime<Utc>,
@@ -141,7 +142,7 @@ pub async fn plan(
         bail!("This {}", overlap_message(&other));
     }
     let id = new_id();
-    insert(pool, &id, None, course_id, clean_title(title), start, end).await?;
+    insert(pool, &id, None, details, start, end).await?;
     Ok(id)
 }
 
@@ -149,19 +150,20 @@ async fn insert(
     pool: &SqlitePool,
     id: &str,
     series_id: Option<&str>,
-    course_id: Option<&str>,
-    title: Option<String>,
+    details: &SessionDetails,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO study_session (id, series_id, course_id, title, start_at, end_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO study_session
+           (id, series_id, course_id, title, profile_id, start_at, end_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(id)
     .bind(series_id)
-    .bind(course_id)
-    .bind(title)
+    .bind(&details.course_id)
+    .bind(clean_title(details.title.as_deref()))
+    .bind(&details.profile_id)
     .bind(time_text(start))
     .bind(time_text(end))
     .bind(now_text())
@@ -179,8 +181,7 @@ async fn insert(
 #[allow(clippy::too_many_arguments)]
 pub async fn plan_weekly(
     pool: &SqlitePool,
-    course_id: Option<&str>,
-    title: Option<&str>,
+    details: &SessionDetails,
     first_date: NaiveDate,
     start_time: NaiveTime,
     end_time: NaiveTime,
@@ -197,15 +198,15 @@ pub async fn plan_weekly(
     let first_start = local_time(first_date, start_time)?;
     check_times(first_start, local_time(first_date, end_time)?, now)?;
 
-    let title = clean_title(title);
     let series_id = new_id();
     sqlx::query(
-        "INSERT INTO session_series (id, course_id, title, until_date, updated_at)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO session_series (id, course_id, title, profile_id, until_date, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(&series_id)
-    .bind(course_id)
-    .bind(&title)
+    .bind(&details.course_id)
+    .bind(clean_title(details.title.as_deref()))
+    .bind(&details.profile_id)
     .bind(until.format("%Y-%m-%d").to_string())
     .bind(now_text())
     .execute(pool)
@@ -223,17 +224,7 @@ pub async fn plan_weekly(
         if overlapping(pool, start, end, None).await?.is_some() {
             result.overlapping += 1;
         } else {
-            let id = new_id();
-            insert(
-                pool,
-                &id,
-                Some(&series_id),
-                course_id,
-                title.clone(),
-                start,
-                end,
-            )
-            .await?;
+            insert(pool, &new_id(), Some(&series_id), details, start, end).await?;
             result.planned += 1;
         }
         date += Duration::days(7);
@@ -272,13 +263,12 @@ fn check_editable(session: &StudySession, now: DateTime<Utc>) -> Result<()> {
     Ok(())
 }
 
-/// Change the course, title and times of a session that hasn't started yet.
-/// A session of a weekly repeat stays part of it.
+/// Change the course, title, profile and times of a session that hasn't started
+/// yet. A session of a weekly repeat stays part of it.
 pub async fn update(
     pool: &SqlitePool,
     session_id: &str,
-    course_id: Option<&str>,
-    title: Option<&str>,
+    details: &SessionDetails,
     start: DateTime<Utc>,
     end: DateTime<Utc>,
     now: DateTime<Utc>,
@@ -290,11 +280,12 @@ pub async fn update(
     }
     sqlx::query(
         "UPDATE study_session
-         SET course_id = ?, title = ?, start_at = ?, end_at = ?, updated_at = ?
+         SET course_id = ?, title = ?, profile_id = ?, start_at = ?, end_at = ?, updated_at = ?
          WHERE id = ?",
     )
-    .bind(course_id)
-    .bind(clean_title(title))
+    .bind(&details.course_id)
+    .bind(clean_title(details.title.as_deref()))
+    .bind(&details.profile_id)
     .bind(time_text(start))
     .bind(time_text(end))
     .bind(now_text())
@@ -390,6 +381,19 @@ pub async fn between(
         .fetch_all(pool)
         .await?;
     Ok(sessions)
+}
+
+/// The block profile of the most recently planned or changed session, so a new
+/// one can start with the same.
+pub async fn last_profile(pool: &SqlitePool) -> Result<Option<String>> {
+    let profile: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT s.profile_id FROM study_session s
+         JOIN block_profile p ON p.id = s.profile_id AND p.deleted = 0
+         WHERE s.deleted = 0 ORDER BY s.updated_at DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(profile.flatten())
 }
 
 /// The session that is running right now, if any.

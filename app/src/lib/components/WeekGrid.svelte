@@ -6,7 +6,15 @@
   // like all-day events in a calendar: most are due at 23:59, after the grid ends.
   // Study sessions are blocks with a lock, as in the mockup: planned ones with a
   // border, the running one pulsing with "Live" and the time left.
-  import type { Activity, ClassBlock, Course, Deadline, FilterRule, StudySession } from "$lib/api";
+  import type {
+    Activity,
+    BlockProfile,
+    ClassBlock,
+    Course,
+    Deadline,
+    FilterRule,
+    StudySession,
+  } from "$lib/api";
   import { hoursText, live } from "$lib/session/live.svelte";
   import { sessionAbout, sessionTimes } from "$lib/session/labels";
   import { isIgnored } from "$lib/api";
@@ -28,6 +36,7 @@
     onShowAnyway,
     onOpenDeadline,
     onOpenSession,
+    profiles = [],
   }: {
     layout: WeekLayout;
     activities: Activity[];
@@ -47,7 +56,15 @@
     onOpenDeadline: (deadline: Deadline) => void;
     /** Click on a study session. */
     onOpenSession: (session: StudySession) => void;
+    /** For the profile name on a session ("13:00–15:30 · Strict"). */
+    profiles?: BlockProfile[];
   } = $props();
+
+  /** "13:00–15:30 · Strict", as in the mockup. */
+  function sessionLine(session: StudySession): string {
+    const profile = profiles.find((p) => p.id === session.profileId);
+    return profile ? `${sessionTimes(session)} · ${profile.name}` : sessionTimes(session);
+  }
 
   /** The session's status, with the running one taken from `live` (it may have started since loading). */
   function sessionStatus(session: StudySession): string {
@@ -265,7 +282,7 @@
   {#each layout.sessions as placed (placed.session.id)}
     {@const session = placed.session}
     {@const status = sessionStatus(session)}
-    {@const times = sessionTimes(session)}
+    {@const times = sessionLine(session)}
     {@const about = sessionAbout(session, courses)}
     {@const position = `grid-column: ${placed.column}; grid-row: ${placed.rowStart} / ${placed.rowEnd}; --lane: ${placed.lane}; --lanes: ${placed.lanes}`}
     <div

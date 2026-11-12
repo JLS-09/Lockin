@@ -4,14 +4,16 @@
   // break), the session's log and "Need to stop?" with the emergency stop,
   // which you hold open for two minutes. The daemon runs the session; this page
   // shows it and asks the daemon for a break, a resume or the stop.
-  // "Blocked right now" follows in step 4, points, streak and the Lockling in phase 6.
+  // "Blocked right now" lists the profile's apps and how often the daemon closed
+  // one ("Blocking paused" during a break). Points, streak and the Lockling follow
+  // in phase 6, websites on the profile in step 5.
   //
   // Without a running session (not in the mockups, built from the same cards):
   // the next session, the coming two weeks and the last seven days.
   // Keys: N plans a session, B takes or ends a break, Escape cancels the emergency stop.
   import { untrack } from "svelte";
 
-  import { api, type SessionEvent, type StudySession } from "$lib/api";
+  import { api, type AppCloses, type BlockProfile, type SessionEvent, type StudySession } from "$lib/api";
   import SessionDialog from "$lib/components/SessionDialog.svelte";
   import StatusIcon from "$lib/components/StatusIcon.svelte";
   import { formatAgo, formatDay, formatTime, t, tn } from "$lib/i18n/index.svelte";
@@ -35,6 +37,13 @@
   let error = $state<string | null>(null);
   let notice = $state<string | null>(null);
   let sessionDialog = $state<SessionDialog>();
+  let profiles = $state<BlockProfile[]>([]);
+  let lastProfile = $state<string | null>(null);
+  /** How often each app was closed during the running session. */
+  let closes = $state<AppCloses[]>([]);
+
+  /** At most this many app chips; the rest is "+3 more". */
+  const MAX_CHIPS = 6;
   /** When the emergency stop was started (ms); null when not holding. */
   let stopStartedAt = $state<number | null>(null);
 
@@ -47,6 +56,57 @@
     .courses()
     .then((list) => (courses = list))
     .catch((e) => (error = String(e)));
+
+  async function loadProfiles() {
+    try {
+      [profiles, lastProfile] = await Promise.all([api.blockProfiles(), api.lastProfile()]);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+  loadProfiles();
+
+  // The running session's closes, every few seconds (the daemon checks every 2).
+  $effect(() => {
+    const id = live.current?.session.id;
+    if (!id) {
+      closes = [];
+      return;
+    }
+    const load = () =>
+      api
+        .sessionCloses(id)
+        .then((list) => (closes = list))
+        .catch(() => {});
+    load();
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  });
+
+  function profileName(session: StudySession): string {
+    return profiles.find((p) => p.id === session.profileId)?.name ?? "";
+  }
+
+  const profile = $derived(profiles.find((p) => p.id === running?.session.profileId));
+  /** "Wed 11 Nov · 13:00–15:30 · profile “Strict”", as in the mockup. */
+  const headerLine = $derived(
+    running
+      ? [
+          formatDay(new Date(running.session.startAt)),
+          sessionTimes(running.session),
+          profile ? t("session.profile", { name: profile.name }) : "",
+        ]
+          .filter(Boolean)
+          .join(" · ")
+      : "",
+  );
+
+  /** "Closed this session: Steam ×2, Discord ×1" */
+  const closedText = $derived(
+    closes.length === 0
+      ? ""
+      : t("blocked.closed", { list: closes.map((c) => `${c.name} ×${c.count}`).join(", ") }),
+  );
 
   /** The last 7 days and the coming 14. */
   async function loadSessions() {
@@ -193,6 +253,7 @@
   async function saveFromDialog(id: string | null, fields: SessionFields): Promise<string | null> {
     try {
       const result = await saveSession(id, fields);
+      lastProfile = fields.profileId ?? lastProfile;
       if (fields.weekly) {
         notice =
           result.overlapping > 0
@@ -244,7 +305,7 @@
     <div class="title">
       <h1>{t("nav.session")}</h1>
       {#if running}
-        <span class="sub">{formatDay(new Date(running.session.startAt))} · {sessionTimes(running.session)}</span>
+        <span class="sub">{headerLine}</span>
       {:else}
         <span class="sub">{t("session.none")}</span>
       {/if}
@@ -362,6 +423,32 @@
             </button>
           {/if}
         </section>
+
+        <section class="card" aria-labelledby="blocked-heading">
+          <div class="card-head">
+            <h2 id="blocked-heading">
+              {t(!profile ? "blocked.nothing" : onBreak ? "blocked.paused" : "blocked.now")}
+            </h2>
+            {#if profile}<span class="small">{tn("profiles.apps", profile.apps.length)}</span>{/if}
+          </div>
+          {#if !profile}
+            <p class="small">{t("blocked.noProfile")}</p>
+          {:else if profile.apps.length === 0}
+            <p class="small">{t("blocked.emptyProfile", { name: profile.name })} <a href="/settings#profiles">{t("blocked.addApps")}</a></p>
+          {:else}
+            <div class="chips">
+              {#each profile.apps.slice(0, MAX_CHIPS) as app (app.id)}
+                <span class="chip">{app.name}</span>
+              {/each}
+              {#if profile.apps.length > MAX_CHIPS}
+                <span class="chip muted" title={profile.apps.slice(MAX_CHIPS).map((a) => a.name).join(", ")}>
+                  {t("blocked.more", { count: profile.apps.length - MAX_CHIPS })}
+                </span>
+              {/if}
+            </div>
+          {/if}
+          {#if closedText}<p class="small">{closedText}</p>{/if}
+        </section>
       </div>
     </div>
 
@@ -434,7 +521,9 @@
                   </span>
                   <span class="line-sub">
                     {#if itemCourse}<span class="dot" style:--course={itemCourse.color} aria-hidden="true"></span>{/if}
-                    {formatDay(new Date(item.startAt))} · {sessionTimes(item)}
+                    {[formatDay(new Date(item.startAt)), sessionTimes(item), profileName(item)]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </span>
                 </span>
                 {#if item.seriesId}<span class="tag">{t("session.weekly")}</span>{/if}
@@ -476,6 +565,8 @@
 <SessionDialog
   bind:this={sessionDialog}
   {courses}
+  {profiles}
+  defaultProfileId={lastProfile}
   onSave={saveFromDialog}
   onDelete={remove}
   onDeleteFollowing={removeFollowing}

@@ -1,12 +1,13 @@
 //! The daemon: `lockin-daemon run` is the background service (see service.rs);
 //! every other command is a small command-line tool on the same database.
 
+mod blocker;
 mod service;
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
-use lockin_core::model::{FeedEvent, FeedSync, StudySession};
-use lockin_core::{db, deadline, import, paths, session, timeedit, urgent};
+use lockin_core::model::{FeedEvent, FeedSync, SessionDetails, StudySession};
+use lockin_core::{block, db, deadline, import, paths, session, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
 
@@ -39,10 +40,11 @@ const USAGE: &str = "usage: lockin-daemon <command>
   remove-deadline <id>     remove a deadline
   urgent                   the Urgent list: open activities and deadlines
 
-  plan-session <when> <end> [title] [course code]
+  plan-session <when> <end> [title] [course code] [profile]
                            plan a study session; <when> is \"2026-11-18 13:00\",
-                           <end> 15:30 (same day); use - for no title
-  plan-weekly <when> <end> [title] [course code]
+                           <end> 15:30 (same day); use - for no title or course;
+                           [profile] is the name of a block profile
+  plan-weekly <when> <end> [title] [course code] [profile]
                            the same, every week until the end of the semester
   sessions                 list last week's and the coming study sessions
   session-status           the running session (study time, break credit) or the next one
@@ -52,7 +54,13 @@ const USAGE: &str = "usage: lockin-daemon <command>
                            start, end or mark missed the sessions that are due
   break                    take a break in the running session (needs credit)
   resume                   end the break
-  emergency-stop           end the running session now";
+  emergency-stop           end the running session now
+
+  profiles                 the block profiles and their apps
+  add-profile <name>       make a block profile, e.g. Strict
+  block <profile> <app>    add an app to a profile: a desktop file id from
+                           installed-apps (e.g. discord), or else a program name
+  installed-apps           the apps in your menu, with their desktop file id";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -217,20 +225,66 @@ async fn main() -> Result<()> {
             let Some(end) = args.get(3) else {
                 bail!(USAGE);
             };
-            let title = args.get(4).map(String::as_str).filter(|t| *t != "-");
-            let course_id = match args.get(5) {
+            let title = args.get(4).filter(|t| *t != "-").cloned();
+            let course_id = match args.get(5).filter(|c| *c != "-") {
                 Some(code) => Some(course_id_for_code(&pool, code).await?),
                 None => None,
             };
-            plan_session(
-                &pool,
-                command == "plan-weekly",
-                when,
-                end,
+            let profile_id = match args.get(6) {
+                Some(name) => Some(profile_id_for_name(&pool, name).await?),
+                None => None,
+            };
+            let details = SessionDetails {
+                course_id,
                 title,
-                course_id.as_deref(),
-            )
-            .await?;
+                profile_id,
+            };
+            plan_session(&pool, command == "plan-weekly", when, end, &details).await?;
+        }
+        (Some("profiles"), _) => {
+            let profiles = block::profiles(&pool).await?;
+            if profiles.is_empty() {
+                println!("No block profiles. Make one with: lockin-daemon add-profile Strict");
+            }
+            for profile in profiles {
+                let names: Vec<&str> = profile.apps.iter().map(|a| a.name.as_str()).collect();
+                println!("{}: {}", profile.name, names.join(", "));
+            }
+        }
+        (Some("add-profile"), Some(name)) => {
+            block::add_profile(&pool, name).await?;
+            println!("Profile {name} made.");
+        }
+        (Some("block"), Some(profile)) => {
+            let Some(app) = args.get(3) else {
+                bail!(USAGE);
+            };
+            let profile_id = profile_id_for_name(&pool, profile).await?;
+            let installed = lockin_core::apps::installed_apps();
+            match installed.iter().find(|a| a.id == *app) {
+                Some(found) => {
+                    block::add_app(&pool, &profile_id, found).await?;
+                    println!("{} added to {profile}.", found.name);
+                }
+                None => {
+                    block::add_program(&pool, &profile_id, app).await?;
+                    println!("Program {app} added to {profile}.");
+                }
+            }
+        }
+        (Some("installed-apps"), _) => {
+            for app in lockin_core::apps::installed_apps() {
+                let flatpak = app
+                    .flatpak_id
+                    .map(|f| format!(" (Flatpak {f})"))
+                    .unwrap_or_default();
+                println!(
+                    "{:<40} {}  [{}]{flatpak}",
+                    app.id,
+                    app.name,
+                    app.exec_names.join(", ")
+                );
+            }
         }
         (Some("sessions"), _) => show_sessions(&pool).await?,
         (Some("session-status"), _) => show_session_status(&pool).await?,
@@ -463,14 +517,22 @@ async fn show_urgent(pool: &db::Pool) -> Result<()> {
     Ok(())
 }
 
+/// The id of the block profile with this name (case doesn't matter).
+async fn profile_id_for_name(pool: &db::Pool, name: &str) -> Result<String> {
+    let profiles = block::profiles(pool).await?;
+    match profiles.iter().find(|p| p.name.eq_ignore_ascii_case(name)) {
+        Some(profile) => Ok(profile.id.clone()),
+        None => bail!("no block profile called {name} (see: lockin-daemon profiles)"),
+    }
+}
+
 /// "2026-11-18 13:00" plus "15:30": a session that day, in local time.
 async fn plan_session(
     pool: &db::Pool,
     weekly: bool,
     when: &str,
     end: &str,
-    title: Option<&str>,
-    course_id: Option<&str>,
+    details: &SessionDetails,
 ) -> Result<()> {
     let Some((date_text, start_text)) = when.split_once([' ', 'T']) else {
         bail!("give a date and a start time, like \"2026-11-18 13:00\"");
@@ -485,17 +547,9 @@ async fn plan_session(
     let (start_time, end_time) = (clock(start_text)?, clock(end)?);
 
     if weekly {
-        let result = session::plan_weekly(
-            pool,
-            course_id,
-            title,
-            date,
-            start_time,
-            end_time,
-            None,
-            Utc::now(),
-        )
-        .await?;
+        let result =
+            session::plan_weekly(pool, details, date, start_time, end_time, None, Utc::now())
+                .await?;
         print!("{} weekly study sessions planned", result.planned);
         if result.overlapping > 0 {
             print!(
@@ -507,7 +561,7 @@ async fn plan_session(
     } else {
         let start = session::local_time(date, start_time)?;
         let end = session::local_time(date, end_time)?;
-        session::plan(pool, course_id, title, start, end, Utc::now()).await?;
+        session::plan(pool, details, start, end, Utc::now()).await?;
         println!(
             "Study session planned, {}.",
             session_times(&StudySession {
@@ -518,6 +572,7 @@ async fn plan_session(
                 start_at: start.to_rfc3339(),
                 end_at: end.to_rfc3339(),
                 status: String::new(),
+                profile_id: None,
             })?
         );
     }

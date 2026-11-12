@@ -4,10 +4,12 @@
   // - Filter rules: which classes to ignore
   // - Courses: the activity templates per course ("After every WPO: Exercises").
   //   The class panel links here with ?course=<id> to open that course.
+  // - Block profiles: the apps a study session closes (the session dialog links here with #profiles)
   // - Language
   import { tick } from "svelte";
   import { page } from "$app/state";
   import { api, type ActivityTemplate, type Course, type CourseKind } from "$lib/api";
+  import BlockProfilesPanel from "$lib/components/BlockProfilesPanel.svelte";
   import CourseTemplates from "$lib/components/CourseTemplates.svelte";
   import RulesPanel from "$lib/components/RulesPanel.svelte";
   import SchedulePanel from "$lib/components/SchedulePanel.svelte";
@@ -39,9 +41,9 @@
 
   // Load, then scroll to the course the class panel asked for.
   load().then(async () => {
-    if (!wanted) return;
     await tick();
-    document.getElementById(`course-${wanted}`)?.scrollIntoView({ block: "start" });
+    if (wanted) document.getElementById(`course-${wanted}`)?.scrollIntoView({ block: "start" });
+    else if (page.url.hash === "#profiles") document.getElementById("profiles")?.scrollIntoView({ block: "start" });
   });
 
   // A new feed or rule can bring new courses and kinds of class.
@@ -102,6 +104,8 @@
       />
     {/each}
   </section>
+
+  <BlockProfilesPanel />
 
   <section class="panel language" aria-labelledby="language-heading">
     <div class="panel-head">

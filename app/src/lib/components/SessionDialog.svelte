@@ -2,21 +2,28 @@
   // The dialog to plan or change a study session: what (optional), course
   // (optional), the day and the time, and for a new one "every week until the
   // end of the semester". Not in the mockups; built like the deadline dialog.
+  // The block profile picks the apps the session closes (Settings → Block profiles);
+  // a new session starts with the profile of the last one planned.
   // Opened with `openNew(day)` (the Study session button, N) or `openEdit(session)`.
   // Enter saves, Escape closes. A session of a weekly repeat can be deleted
   // alone or together with its later weeks.
-  import type { Course, StudySession } from "$lib/api";
+  import type { BlockProfile, Course, StudySession } from "$lib/api";
   import { formatDay, isoDate, t } from "$lib/i18n/index.svelte";
   import type { SessionFields } from "$lib/session/sessions";
   import { semesterEnd } from "$lib/week/semester";
 
   let {
     courses,
+    profiles,
+    defaultProfileId = null,
     onSave,
     onDelete,
     onDeleteFollowing,
   }: {
     courses: Course[];
+    profiles: BlockProfile[];
+    /** The profile a new session starts with (the last one used). */
+    defaultProfileId?: string | null;
     /** `id` is null for a new session. Resolves to null when saved, else to the reason it wasn't. */
     onSave: (id: string | null, fields: SessionFields) => Promise<string | null>;
     onDelete: (session: StudySession) => void;
@@ -32,6 +39,7 @@
   let editing = $state<StudySession | null>(null);
   let title = $state("");
   let courseId = $state("");
+  let profileId = $state("");
   let date = $state("");
   let start = $state("13:00");
   let end = $state("15:00");
@@ -61,6 +69,7 @@
     editing = null;
     title = "";
     courseId = "";
+    profileId = profiles.some((p) => p.id === defaultProfileId) ? (defaultProfileId ?? "") : "";
     date = isoDate(day);
     start = `${String(Math.min(from, 23)).padStart(2, "0")}:00`;
     end = `${String(Math.min(from + 2, 23)).padStart(2, "0")}:${from + 2 > 23 ? "59" : "00"}`;
@@ -73,6 +82,7 @@
     editing = session;
     title = session.title ?? "";
     courseId = session.courseId ?? "";
+    profileId = session.profileId ?? "";
     date = isoDate(from);
     start = clock(from);
     end = clock(new Date(session.endAt));
@@ -139,6 +149,7 @@
     problem = await onSave(editing?.id ?? null, {
       courseId: courseId || null,
       title: title.trim() || null,
+      profileId: profileId || null,
       start: from.toISOString(),
       end: to.toISOString(),
       weekly: !editing && weekly,
@@ -185,6 +196,21 @@
           <option value={course.id}>{course.name}</option>
         {/each}
       </select>
+    </label>
+
+    <label class="field">
+      <span class="label">{t("sessionDialog.profile")}</span>
+      <select bind:value={profileId}>
+        <option value="">{t("sessionDialog.noProfile")}</option>
+        {#each profiles as profile (profile.id)}
+          <option value={profile.id}>
+            {profile.name} · {profile.apps.map((a) => a.name).join(", ") || t("sessionDialog.emptyProfile")}
+          </option>
+        {/each}
+      </select>
+      {#if profiles.length === 0}
+        <span class="hint">{t("sessionDialog.noProfiles")} <a href="/settings#profiles">{t("sessionDialog.makeProfile")}</a></span>
+      {/if}
     </label>
 
     <div class="when">

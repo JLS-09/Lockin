@@ -9,13 +9,14 @@
 //! `block_id` here is `blockId` in `invoke`.
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
+use lockin_core::apps::{self, InstalledApp};
 use lockin_core::ipc::{self, DaemonStatus, Request};
 use lockin_core::model::{
-    Activity, ActivityTemplate, ClassBlock, Course, CourseKind, Deadline, FeedInfo, FeedSync,
-    FilterRule, HistoryImport, PlanResult, SessionEvent, SessionState, StudySession, UrgentItem,
-    WeekClasses, WeekProgress,
+    Activity, ActivityTemplate, AppCloses, BlockProfile, ClassBlock, Course, CourseKind, Deadline,
+    FeedInfo, FeedSync, FilterRule, HistoryImport, PlanResult, SessionDetails, SessionEvent,
+    SessionState, StudySession, UrgentItem, WeekClasses, WeekProgress,
 };
-use lockin_core::{activity, db, deadline, import, paths, session, urgent};
+use lockin_core::{activity, block, db, deadline, import, paths, session, urgent};
 use serde::Serialize;
 use tauri::{Manager, State};
 
@@ -388,26 +389,25 @@ async fn current_session(pool: State<'_, db::Pool>) -> CommandResult<Option<Curr
     }))
 }
 
-/// Plan one session; the course and title are optional. Returns its id.
+/// Plan one session; course, title and block profile are optional. Returns its id.
 #[tauri::command]
 async fn plan_session(
     pool: State<'_, db::Pool>,
     course_id: Option<String>,
     title: Option<String>,
+    profile_id: Option<String>,
     start: String,
     end: String,
 ) -> CommandResult<String> {
     let (start, end) = (parse_time(&start)?, parse_time(&end)?);
-    session::plan(
-        &pool,
-        course_id.as_deref(),
-        title.as_deref(),
-        start,
-        end,
-        Utc::now(),
-    )
-    .await
-    .map_err(message)
+    let details = SessionDetails {
+        course_id,
+        title,
+        profile_id,
+    };
+    session::plan(&pool, &details, start, end, Utc::now())
+        .await
+        .map_err(message)
 }
 
 /// Plan a session every week from the first one (`start` to `end`), on the
@@ -417,6 +417,7 @@ async fn plan_weekly(
     pool: State<'_, db::Pool>,
     course_id: Option<String>,
     title: Option<String>,
+    profile_id: Option<String>,
     start: String,
     end: String,
     until: Option<String>,
@@ -427,10 +428,14 @@ async fn plan_weekly(
         Some(text) => Some(parse_date(&text)?),
         None => None,
     };
+    let details = SessionDetails {
+        course_id,
+        title,
+        profile_id,
+    };
     session::plan_weekly(
         &pool,
-        course_id.as_deref(),
-        title.as_deref(),
+        &details,
         start.date_naive(),
         start.time(),
         end.time(),
@@ -448,21 +453,114 @@ async fn update_session(
     session_id: String,
     course_id: Option<String>,
     title: Option<String>,
+    profile_id: Option<String>,
     start: String,
     end: String,
 ) -> CommandResult<()> {
     let (start, end) = (parse_time(&start)?, parse_time(&end)?);
-    session::update(
-        &pool,
-        &session_id,
-        course_id.as_deref(),
-        title.as_deref(),
-        start,
-        end,
-        Utc::now(),
-    )
-    .await
-    .map_err(message)
+    let details = SessionDetails {
+        course_id,
+        title,
+        profile_id,
+    };
+    session::update(&pool, &session_id, &details, start, end, Utc::now())
+        .await
+        .map_err(message)
+}
+
+/// The profile of the last planned session, for the next one's default.
+#[tauri::command]
+async fn last_profile(pool: State<'_, db::Pool>) -> CommandResult<Option<String>> {
+    session::last_profile(&pool).await.map_err(message)
+}
+
+// ---------- Block profiles ----------
+
+#[tauri::command]
+async fn block_profiles(pool: State<'_, db::Pool>) -> CommandResult<Vec<BlockProfile>> {
+    block::profiles(&pool).await.map_err(message)
+}
+
+/// Make a profile; returns its id.
+#[tauri::command]
+async fn add_block_profile(pool: State<'_, db::Pool>, name: String) -> CommandResult<String> {
+    block::add_profile(&pool, &name).await.map_err(message)
+}
+
+#[tauri::command]
+async fn rename_block_profile(
+    pool: State<'_, db::Pool>,
+    profile_id: String,
+    name: String,
+) -> CommandResult<()> {
+    block::rename_profile(&pool, &profile_id, &name)
+        .await
+        .map_err(message)
+}
+
+/// How many planned sessions use a profile, to ask before deleting it.
+#[tauri::command]
+async fn sessions_using_profile(
+    pool: State<'_, db::Pool>,
+    profile_id: String,
+) -> CommandResult<u32> {
+    block::planned_sessions_using(&pool, &profile_id)
+        .await
+        .map_err(message)
+}
+
+/// Delete a profile; returns how many planned sessions now block nothing.
+#[tauri::command]
+async fn remove_block_profile(pool: State<'_, db::Pool>, profile_id: String) -> CommandResult<u32> {
+    block::remove_profile(&pool, &profile_id)
+        .await
+        .map_err(message)
+}
+
+/// The apps in the menu, for the picker. Reading the desktop files takes a
+/// moment, so it runs off the async threads.
+#[tauri::command]
+async fn installed_apps() -> CommandResult<Vec<InstalledApp>> {
+    tauri::async_runtime::spawn_blocking(apps::installed_apps)
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn add_blocked_app(
+    pool: State<'_, db::Pool>,
+    profile_id: String,
+    app: InstalledApp,
+) -> CommandResult<String> {
+    block::add_app(&pool, &profile_id, &app)
+        .await
+        .map_err(message)
+}
+
+/// A program without a menu entry, by its process name.
+#[tauri::command]
+async fn add_blocked_program(
+    pool: State<'_, db::Pool>,
+    profile_id: String,
+    program: String,
+) -> CommandResult<String> {
+    block::add_program(&pool, &profile_id, &program)
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn remove_blocked_app(pool: State<'_, db::Pool>, entry_id: String) -> CommandResult<()> {
+    block::remove_app(&pool, &entry_id).await.map_err(message)
+}
+
+/// How often each app was closed during a session.
+#[tauri::command]
+async fn session_closes(
+    pool: State<'_, db::Pool>,
+    session_id: String,
+) -> CommandResult<Vec<AppCloses>> {
+    block::closes(&pool, &session_id).await.map_err(message)
 }
 
 /// Remove a session that hasn't started yet; `restore_session` undoes it.
@@ -621,6 +719,17 @@ pub fn run() {
             take_break,
             resume_session,
             emergency_stop,
+            last_profile,
+            block_profiles,
+            add_block_profile,
+            rename_block_profile,
+            sessions_using_profile,
+            remove_block_profile,
+            installed_apps,
+            add_blocked_app,
+            add_blocked_program,
+            remove_blocked_app,
+            session_closes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Lockin app");

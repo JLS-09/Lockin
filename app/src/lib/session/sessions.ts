@@ -8,6 +8,8 @@ import { api, type StudySession } from "$lib/api";
 export interface SessionFields {
   courseId: string | null;
   title: string | null;
+  /** The block profile; null = blocks nothing. */
+  profileId: string | null;
   start: string;
   end: string;
   /** New sessions only: every week until the end of the semester. */
@@ -24,16 +26,16 @@ export interface SaveResult {
 
 /** Plan a new session (`id` null) or change one. Throws with the reason when it can't. */
 export async function saveSession(id: string | null, fields: SessionFields): Promise<SaveResult> {
-  const { courseId, title, start, end } = fields;
+  const { courseId, title, profileId, start, end } = fields;
   if (id) {
-    await api.updateSession(id, courseId, title, start, end);
+    await api.updateSession(id, courseId, title, profileId, start, end);
     return { planned: 1, overlapping: 0 };
   }
   if (fields.weekly) {
-    const result = await api.planWeekly(courseId, title, start, end, null);
+    const result = await api.planWeekly(courseId, title, profileId, start, end, null);
     return { planned: result.planned, overlapping: result.overlapping };
   }
-  await api.planSession(courseId, title, start, end);
+  await api.planSession(courseId, title, profileId, start, end);
   return { planned: 1, overlapping: 0 };
 }
 

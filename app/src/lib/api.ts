@@ -201,6 +201,8 @@ export interface StudySession {
   startAt: string;
   endAt: string;
   status: SessionStatus;
+  /** The block profile it closes apps with; null = blocks nothing. */
+  profileId: string | null;
 }
 
 export type SessionEventKind = "start" | "break" | "resume" | "emergency" | "end";
@@ -250,6 +252,43 @@ export interface PlanResult {
   planned: number;
   /** Weeks left out because they overlap another session. */
   overlapping: number;
+}
+
+/** An app on a block profile. */
+export interface BlockedApp {
+  id: string;
+  profileId: string;
+  /** The desktop file id, or "program:<name>" for a program added by name. */
+  appId: string;
+  name: string;
+  /** Program names to match, one per line. */
+  execNames: string;
+  flatpakId: string | null;
+}
+
+/** A block profile with its apps, e.g. "Strict". */
+export interface BlockProfile {
+  id: string;
+  name: string;
+  apps: BlockedApp[];
+  /** True while the running session blocks with it: apps can be added, not removed. */
+  inUse: boolean;
+}
+
+/** An app from the menu, for the picker. */
+export interface InstalledApp {
+  id: string;
+  name: string;
+  execNames: string[];
+  flatpakId: string | null;
+}
+
+/** How often the daemon closed an app during a session. */
+export interface AppCloses {
+  appId: string;
+  name: string;
+  count: number;
+  lastAt: string;
 }
 
 /** The daemon's answer to "are you there?". */
@@ -326,23 +365,32 @@ export const api = {
   /** The running session, or null. */
   currentSession: () => invoke<CurrentSession | null>("current_session"),
   /** Returns the new id. Times are RFC 3339. */
-  planSession: (courseId: string | null, title: string | null, start: string, end: string) =>
-    invoke<string>("plan_session", { courseId, title, start, end }),
+  planSession: (
+    courseId: string | null,
+    title: string | null,
+    profileId: string | null,
+    start: string,
+    end: string,
+  ) => invoke<string>("plan_session", { courseId, title, profileId, start, end }),
   /** Every week from this first one, until `until` (YYYY-MM-DD) or the end of the semester. */
   planWeekly: (
     courseId: string | null,
     title: string | null,
+    profileId: string | null,
     start: string,
     end: string,
     until: string | null,
-  ) => invoke<PlanResult>("plan_weekly", { courseId, title, start, end, until }),
+  ) => invoke<PlanResult>("plan_weekly", { courseId, title, profileId, start, end, until }),
   updateSession: (
     sessionId: string,
     courseId: string | null,
     title: string | null,
+    profileId: string | null,
     start: string,
     end: string,
-  ) => invoke<void>("update_session", { sessionId, courseId, title, start, end }),
+  ) => invoke<void>("update_session", { sessionId, courseId, title, profileId, start, end }),
+  /** The profile of the last planned session, the default for a new one. */
+  lastProfile: () => invoke<string | null>("last_profile"),
   removeSession: (sessionId: string) => invoke<void>("remove_session", { sessionId }),
   restoreSession: (sessionId: string) => invoke<void>("restore_session", { sessionId }),
   /** This session and the later weeks of its repeat. Returns how many were removed. */
@@ -355,4 +403,23 @@ export const api = {
   takeBreak: () => invoke<void>("take_break"),
   resumeSession: () => invoke<void>("resume_session"),
   emergencyStop: () => invoke<void>("emergency_stop"),
+
+  blockProfiles: () => invoke<BlockProfile[]>("block_profiles"),
+  /** Returns the new profile's id. */
+  addBlockProfile: (name: string) => invoke<string>("add_block_profile", { name }),
+  renameBlockProfile: (profileId: string, name: string) =>
+    invoke<void>("rename_block_profile", { profileId, name }),
+  /** Planned sessions that use the profile, to ask before deleting it. */
+  sessionsUsingProfile: (profileId: string) =>
+    invoke<number>("sessions_using_profile", { profileId }),
+  /** Returns how many planned sessions now block nothing. */
+  removeBlockProfile: (profileId: string) => invoke<number>("remove_block_profile", { profileId }),
+  installedApps: () => invoke<InstalledApp[]>("installed_apps"),
+  addBlockedApp: (profileId: string, app: InstalledApp) =>
+    invoke<string>("add_blocked_app", { profileId, app }),
+  /** A program without a menu entry, by its process name. */
+  addBlockedProgram: (profileId: string, program: string) =>
+    invoke<string>("add_blocked_program", { profileId, program }),
+  removeBlockedApp: (entryId: string) => invoke<void>("remove_blocked_app", { entryId }),
+  sessionCloses: (sessionId: string) => invoke<AppCloses[]>("session_closes", { sessionId }),
 };

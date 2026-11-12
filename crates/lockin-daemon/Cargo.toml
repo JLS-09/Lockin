@@ -12,3 +12,7 @@ tokio.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
+
+# kill(), to close blocked apps (blocker.rs).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
