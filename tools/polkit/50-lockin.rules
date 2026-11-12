@@ -1,0 +1,8 @@
+// Lockin: lets @USER@ run lockin-helper (it only changes Lockin's own section
+// of /etc/hosts) without a password, also from the daemon, which runs outside
+// a desktop session. Installed by tools/install-helper.sh.
+polkit.addRule(function (action, subject) {
+    if (action.id == "io.github.jls_09.lockin.block-websites" && subject.user == "@USER@") {
+        return polkit.Result.YES;
+    }
+});

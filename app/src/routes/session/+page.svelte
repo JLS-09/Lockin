@@ -17,7 +17,7 @@
   import SessionDialog from "$lib/components/SessionDialog.svelte";
   import StatusIcon from "$lib/components/StatusIcon.svelte";
   import { formatAgo, formatDay, formatTime, t, tn } from "$lib/i18n/index.svelte";
-  import { sessionAbout, sessionName, sessionTimes } from "$lib/session/labels";
+  import { profileCount, sessionAbout, sessionName, sessionTimes } from "$lib/session/labels";
   import { clockText, hoursText, live } from "$lib/session/live.svelte";
   import { isEditable, saveSession, type SessionFields } from "$lib/session/sessions";
   import type { Course } from "$lib/api";
@@ -88,6 +88,11 @@
   }
 
   const profile = $derived(profiles.find((p) => p.id === running?.session.profileId));
+
+  /** Everything the profile blocks, apps first, as chip labels. */
+  const blockedNames = $derived(
+    profile ? [...profile.apps.map((a) => a.name), ...profile.sites.map((s) => s.domain)] : [],
+  );
   /** "Wed 11 Nov · 13:00–15:30 · profile “Strict”", as in the mockup. */
   const headerLine = $derived(
     running
@@ -183,9 +188,12 @@
     );
   });
 
-  const breakMinutes = $derived(
-    running && current ? Math.max(1, Math.min(running.breakMinutes, Math.floor(current.creditLeftSeconds / 60))) : 0,
-  );
+  /** "Take a 5-min break": less when less credit is left; the full length while there's none yet. */
+  const breakMinutes = $derived.by(() => {
+    if (!running || !current) return 0;
+    const left = Math.floor(current.creditLeftSeconds / 60);
+    return left > 0 ? Math.min(running.breakMinutes, left) : running.breakMinutes;
+  });
   /** "Credit left after this break: 10 min" while on a break. */
   const creditAfterBreak = $derived(
     current ? Math.max(0, Math.floor((current.creditLeftSeconds - live.breakSecondsLeft) / 60)) : 0,
@@ -429,23 +437,26 @@
             <h2 id="blocked-heading">
               {t(!profile ? "blocked.nothing" : onBreak ? "blocked.paused" : "blocked.now")}
             </h2>
-            {#if profile}<span class="small">{tn("profiles.apps", profile.apps.length)}</span>{/if}
+            {#if profile}<span class="small">{profileCount(profile)}</span>{/if}
           </div>
           {#if !profile}
             <p class="small">{t("blocked.noProfile")}</p>
-          {:else if profile.apps.length === 0}
+          {:else if blockedNames.length === 0}
             <p class="small">{t("blocked.emptyProfile", { name: profile.name })} <a href="/settings#profiles">{t("blocked.addApps")}</a></p>
           {:else}
             <div class="chips">
-              {#each profile.apps.slice(0, MAX_CHIPS) as app (app.id)}
-                <span class="chip">{app.name}</span>
+              {#each blockedNames.slice(0, MAX_CHIPS) as name (name)}
+                <span class="chip">{name}</span>
               {/each}
-              {#if profile.apps.length > MAX_CHIPS}
-                <span class="chip muted" title={profile.apps.slice(MAX_CHIPS).map((a) => a.name).join(", ")}>
-                  {t("blocked.more", { count: profile.apps.length - MAX_CHIPS })}
+              {#if blockedNames.length > MAX_CHIPS}
+                <span class="chip muted" title={blockedNames.slice(MAX_CHIPS).join(", ")}>
+                  {t("blocked.more", { count: blockedNames.length - MAX_CHIPS })}
                 </span>
               {/if}
             </div>
+            {#if profile.sites.length > 0 && live.daemon?.websitesProblem}
+              <p class="small warn" title={live.daemon.websitesProblem}>{t("blocked.websitesProblem")}</p>
+            {/if}
           {/if}
           {#if closedText}<p class="small">{closedText}</p>{/if}
         </section>
@@ -990,6 +1001,10 @@
     border-radius: var(--radius-sm);
     background: var(--tag);
     font-size: var(--text-sm);
+  }
+
+  .warn {
+    color: var(--status-partial);
   }
 
   .state {

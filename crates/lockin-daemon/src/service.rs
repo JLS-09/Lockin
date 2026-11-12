@@ -8,7 +8,8 @@
 //!   up a session.
 //!
 //! - every 2 seconds while you study (not on a break), close the apps on the
-//!   session's block profile (`blocker.rs`);
+//!   session's block profile (`blocker.rs`) and block its websites
+//!   (`sites.rs`); on a break and after the session, unblock them;
 //! - answer the app on the socket (`lockin_core::ipc`): its status, and taking
 //!   a break, resuming or the emergency stop in the running session.
 //!
@@ -27,6 +28,31 @@ use lockin_core::model::TickResult;
 use lockin_core::{block, db, import, now_text, paths, session};
 
 use crate::blocker::{self, AppBlocker};
+use crate::sites::SiteBlocker;
+
+/// What every connection to the socket may read: since when the daemon runs,
+/// and why websites can't be blocked (if so). Cloning shares the same values.
+#[derive(Clone)]
+struct Shared {
+    started_at: String,
+    websites_problem: std::sync::Arc<std::sync::Mutex<Option<String>>>,
+}
+
+impl Shared {
+    fn new(started_at: String) -> Shared {
+        Shared {
+            started_at,
+            websites_problem: Default::default(),
+        }
+    }
+
+    fn websites_problem(&self) -> Option<String> {
+        self.websites_problem
+            .lock()
+            .map(|p| p.clone())
+            .unwrap_or(None)
+    }
+}
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::task::JoinHandle;
@@ -48,7 +74,7 @@ pub async fn run(pool: db::Pool) -> Result<()> {
         paths::database_file()?.display()
     ));
 
-    let started_at = now_text();
+    let shared = Shared::new(now_text());
     let socket = ipc::socket_path()?;
     let listener = listen(&socket)?;
 
@@ -58,6 +84,7 @@ pub async fn run(pool: db::Pool) -> Result<()> {
     let mut block_ticker = tokio::time::interval(Duration::from_secs(BLOCK_SECONDS));
     block_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut blocker = blocker::for_this_system();
+    let mut sites = SiteBlocker::default();
     refresh_blocked_apps(&pool).await;
 
     let mut syncing: Option<JoinHandle<()>> = None;
@@ -90,12 +117,15 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                 }
             }
             _ = block_ticker.tick() => {
-                close_blocked_apps(&pool, blocker.as_mut()).await;
+                enforce_blocking(&pool, blocker.as_mut(), &mut sites).await;
+                if let Ok(mut problem) = shared.websites_problem.lock() {
+                    problem.clone_from(&sites.problem);
+                }
             }
             accepted = listener.accept() => {
                 if let Ok((stream, _)) = accepted {
                     // Each connection gets its own task, so a slow client never holds up the loop.
-                    tokio::spawn(answer_connection(stream, pool.clone(), started_at.clone()));
+                    tokio::spawn(answer_connection(stream, pool.clone(), shared.clone()));
                 }
             }
             _ = &mut stop => {
@@ -130,7 +160,7 @@ fn listen(socket: &Path) -> Result<UnixListener> {
 }
 
 /// One connection: read one request line, write one response line.
-async fn answer_connection(stream: UnixStream, pool: db::Pool, started_at: String) {
+async fn answer_connection(stream: UnixStream, pool: db::Pool, shared: Shared) {
     let (reader, mut writer) = stream.into_split();
     let mut line = String::new();
     // A request is one short line; more than 4 KB isn't one of ours.
@@ -139,7 +169,7 @@ async fn answer_connection(stream: UnixStream, pool: db::Pool, started_at: Strin
         return;
     }
     let response = match serde_json::from_str::<Request>(&line) {
-        Ok(request) => answer(&pool, &started_at, request, Utc::now()).await,
+        Ok(request) => answer(&pool, &shared, request, Utc::now()).await,
         Err(_) => Response::failed("unknown request"),
     };
     if let Ok(mut text) = serde_json::to_string(&response) {
@@ -151,7 +181,7 @@ async fn answer_connection(stream: UnixStream, pool: db::Pool, started_at: Strin
 /// What the daemon answers to a request, at `now`.
 async fn answer(
     pool: &db::Pool,
-    started_at: &str,
+    shared: &Shared,
     request: Request,
     now: DateTime<Utc>,
 ) -> Response {
@@ -161,8 +191,9 @@ async fn answer(
                 Ok(last_sync_at) => Response {
                     status: Some(DaemonStatus {
                         version: env!("CARGO_PKG_VERSION").to_string(),
-                        started_at: started_at.to_string(),
+                        started_at: shared.started_at.clone(),
                         last_sync_at,
+                        websites_problem: shared.websites_problem(),
                     }),
                     ..Response::done()
                 },
@@ -220,19 +251,22 @@ async fn refresh_blocked_apps(pool: &db::Pool) {
     }
 }
 
-/// Close the blocked apps of the running session (nothing on a break), and
-/// write down each close for the Session page.
-async fn close_blocked_apps(pool: &db::Pool, blocker: &mut dyn AppBlocker) {
+/// Close the blocked apps and block the websites of the running session
+/// (nothing on a break), and write down each app close for the Session page.
+async fn enforce_blocking(pool: &db::Pool, blocker: &mut dyn AppBlocker, sites: &mut SiteBlocker) {
     let now = Utc::now();
-    let (session_id, apps) = match block::blocked_now(pool, now).await {
+    let blocked = match block::blocked_now(pool, now).await {
         Ok(found) => found,
         Err(error) => {
             say(&format!("blocking: {error:#}"));
             return;
         }
     };
-    let closed = blocker.close(&apps);
-    let Some(session_id) = session_id else {
+    if let Some(change) = sites.apply(&blocked.sites).await {
+        say(&change);
+    }
+    let closed = blocker.close(&blocked.apps);
+    let Some(session_id) = blocked.session_id else {
         return;
     };
     for app in closed {
@@ -393,7 +427,7 @@ mod tests {
                 tokio::spawn(answer_connection(
                     stream,
                     serving.clone(),
-                    "2099-11-04T12:00:00Z".into(),
+                    Shared::new("2099-11-04T12:00:00Z".into()),
                 ));
             }
         });

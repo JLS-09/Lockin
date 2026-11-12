@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!-- Lockin: lets the daemon run lockin-helper as root through pkexec.
+     The helper can only change Lockin's own section of /etc/hosts.
+     Installed by tools/install-helper.sh, together with a rule that allows
+     your user without a password (50-lockin.rules). -->
+<policyconfig>
+  <vendor>Lockin</vendor>
+  <vendor_url>https://github.com/JLS-09/Lockin</vendor_url>
+  <action id="io.github.jls_09.lockin.block-websites">
+    <description>Block websites during a study session</description>
+    <description xml:lang="nl">Websites blokkeren tijdens een studiesessie</description>
+    <message>Lockin wants to block websites during your study session</message>
+    <message xml:lang="nl">Lockin wil websites blokkeren tijdens je studiesessie</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/lockin/lockin-helper</annotate>
+  </action>
+</policyconfig>

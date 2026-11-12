@@ -266,11 +266,19 @@ export interface BlockedApp {
   flatpakId: string | null;
 }
 
-/** A block profile with its apps, e.g. "Strict". */
+/** A website on a block profile, e.g. "youtube.com" (www. and m. are blocked with it). */
+export interface BlockedSite {
+  id: string;
+  profileId: string;
+  domain: string;
+}
+
+/** A block profile with its apps and websites, e.g. "Strict". */
 export interface BlockProfile {
   id: string;
   name: string;
   apps: BlockedApp[];
+  sites: BlockedSite[];
   /** True while the running session blocks with it: apps can be added, not removed. */
   inUse: boolean;
 }
@@ -297,6 +305,8 @@ export interface DaemonStatus {
   startedAt: string;
   /** The most recent feed sync; null without feeds. */
   lastSyncAt: string | null;
+  /** Why websites can't be blocked right now (e.g. the helper isn't set up). */
+  websitesProblem: string | null;
 }
 
 export const api = {
@@ -421,5 +431,9 @@ export const api = {
   addBlockedProgram: (profileId: string, program: string) =>
     invoke<string>("add_blocked_program", { profileId, program }),
   removeBlockedApp: (entryId: string) => invoke<void>("remove_blocked_app", { entryId }),
+  /** Typed any way ("https://www.youtube.com/watch"); stored as the domain. */
+  addBlockedSite: (profileId: string, website: string) =>
+    invoke<string>("add_blocked_site", { profileId, website }),
+  removeBlockedSite: (entryId: string) => invoke<void>("remove_blocked_site", { entryId }),
   sessionCloses: (sessionId: string) => invoke<AppCloses[]>("session_closes", { sessionId }),
 };

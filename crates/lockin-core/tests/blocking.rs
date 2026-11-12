@@ -117,23 +117,23 @@ async fn blocking_follows_the_running_session() {
     block::add_app(&pool, &strict, &discord()).await.unwrap();
 
     // No session: nothing blocked.
-    let (session_id, apps) = block::blocked_now(&pool, Utc::now()).await.unwrap();
-    assert!(session_id.is_none() && apps.is_empty());
+    let now = block::blocked_now(&pool, Utc::now()).await.unwrap();
+    assert!(now.session_id.is_none() && now.apps.is_empty());
 
     // Studying: the profile's apps.
     let id = running_session(&pool, &strict).await;
-    let (session_id, apps) = block::blocked_now(&pool, Utc::now()).await.unwrap();
-    assert_eq!(session_id.as_deref(), Some(id.as_str()));
-    assert_eq!(apps.len(), 1);
+    let now = block::blocked_now(&pool, Utc::now()).await.unwrap();
+    assert_eq!(now.session_id.as_deref(), Some(id.as_str()));
+    assert_eq!(now.apps.len(), 1);
 
     // On a break: nothing.
     session::take_break(&pool, &id, Utc::now()).await.unwrap();
-    let (_, apps) = block::blocked_now(&pool, Utc::now()).await.unwrap();
+    let apps = block::blocked_now(&pool, Utc::now()).await.unwrap().apps;
     assert!(apps.is_empty());
 
     // Back at work: blocked again.
     session::resume(&pool, &id, Utc::now(), None).await.unwrap();
-    let (_, apps) = block::blocked_now(&pool, Utc::now()).await.unwrap();
+    let apps = block::blocked_now(&pool, Utc::now()).await.unwrap().apps;
     assert_eq!(apps.len(), 1);
 }
 
@@ -241,4 +241,43 @@ async fn apps_follow_what_is_installed_now() {
     // Nothing new: nothing changes; the program added by name is left alone.
     assert_eq!(block::refresh_apps(&pool, &[chrome]).await.unwrap(), 0);
     assert_eq!(apps[1].exec_names, "steam");
+}
+
+#[tokio::test]
+async fn websites_on_a_profile() {
+    let pool = database().await;
+    let strict = block::add_profile(&pool, "Strict").await.unwrap();
+    // Typed any way, stored as the domain.
+    block::add_site(&pool, &strict, "https://www.YouTube.com/watch?v=1")
+        .await
+        .unwrap();
+    block::add_site(&pool, &strict, "reddit.com").await.unwrap();
+    assert!(
+        block::add_site(&pool, &strict, "youtube.com")
+            .await
+            .is_err()
+    );
+    assert!(block::add_site(&pool, &strict, "not a site").await.is_err());
+
+    let profile = &block::profiles(&pool).await.unwrap()[0];
+    let domains: Vec<&str> = profile.sites.iter().map(|s| s.domain.as_str()).collect();
+    assert_eq!(domains, vec!["reddit.com", "youtube.com"]);
+
+    // Blocked while studying, not on a break; a running profile keeps its websites.
+    let id = running_session(&pool, &strict).await;
+    let now = block::blocked_now(&pool, Utc::now()).await.unwrap();
+    assert_eq!(now.sites, vec!["reddit.com", "youtube.com"]);
+    assert!(
+        block::remove_site(&pool, &profile.sites[0].id)
+            .await
+            .is_err()
+    );
+    session::take_break(&pool, &id, Utc::now()).await.unwrap();
+    assert!(
+        block::blocked_now(&pool, Utc::now())
+            .await
+            .unwrap()
+            .sites
+            .is_empty()
+    );
 }

@@ -1,15 +1,19 @@
 <script lang="ts">
-  // Settings → Block profiles: your own lists of apps a study session closes,
-  // e.g. "Strict" and "Light". Lockin ships none: everyone's distractions differ.
+  // Settings → Block profiles: your own lists of apps a study session closes and
+  // websites it blocks, e.g. "Strict" and "Light". Lockin ships none: everyone's
+  // distractions differ. Websites are typed ("youtube.com"); they're blocked
+  // through /etc/hosts, which needs a one-time setup (tools/install-helper.sh).
   // Not in the mockups; built from the panels' pieces (the course template cards).
   //
   // Each profile shows its apps as chips. "Add app" opens a searchable list of
   // the apps in your menu; a program that isn't there (a game, a script) can be
   // added by its name. While the running session uses a profile, apps can be
-  // added but not removed, and it can't be deleted.
+  // added but not removed, and it can't be deleted. The same goes for websites.
   import { tick } from "svelte";
   import { api, type BlockProfile, type InstalledApp } from "$lib/api";
   import { t, tn } from "$lib/i18n/index.svelte";
+  import { profileCount } from "$lib/session/labels";
+  import { live } from "$lib/session/live.svelte";
 
   let profiles = $state<BlockProfile[]>([]);
   let installed = $state<InstalledApp[] | null>(null);
@@ -23,6 +27,10 @@
   /** The profile being renamed, and the new name. */
   let renaming = $state<string | null>(null);
   let renameText = $state("");
+  /** The profile whose website field is open, and what's typed in it. */
+  let addingSite = $state<string | null>(null);
+  let siteText = $state("");
+  let siteInput = $state<HTMLInputElement>();
   /** The profile asking "Delete?", with how many planned sessions use it. */
   let confirming = $state<{ id: string; sessions: number } | null>(null);
 
@@ -130,6 +138,39 @@
     await load();
   }
 
+  async function openSiteInput(profileId: string) {
+    addingSite = profileId;
+    siteText = "";
+    await tick();
+    siteInput?.focus();
+  }
+
+  async function addSite(event: SubmitEvent, profile: BlockProfile) {
+    event.preventDefault();
+    if (!siteText.trim()) return;
+    try {
+      await api.addBlockedSite(profile.id, siteText);
+      // Stay open for the next one.
+      siteText = "";
+      message = null;
+      await load();
+    } catch (e) {
+      fail(e);
+    }
+  }
+
+  async function removeSite(profile: BlockProfile, entryId: string) {
+    profiles = profiles.map((p) =>
+      p.id === profile.id ? { ...p, sites: p.sites.filter((s) => s.id !== entryId) } : p,
+    );
+    try {
+      await api.removeBlockedSite(entryId);
+    } catch (e) {
+      fail(e);
+    }
+    await load();
+  }
+
   async function startRename(profile: BlockProfile) {
     renaming = profile.id;
     renameText = profile.name;
@@ -191,6 +232,9 @@
     <h2 class="panel-title" id="profiles-heading">{t("profiles.title")}</h2>
   </div>
   <p class="intro">{t("profiles.hint")}</p>
+  {#if live.daemon?.websitesProblem && profiles.some((p) => p.sites.length > 0)}
+    <p class="setup" role="status" title={live.daemon.websitesProblem}>{t("profiles.websitesSetup")}</p>
+  {/if}
 
   {#if profiles.length === 0}
     <p class="panel-empty">{t("profiles.empty")}</p>
@@ -214,7 +258,7 @@
           />
         {:else}
           <h3>{profile.name}</h3>
-          <span class="count">{tn("profiles.apps", profile.apps.length)}</span>
+          <span class="count">{profileCount(profile)}</span>
           {#if profile.inUse}
             <span class="in-use" title={t("profiles.inUseHint")}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>
@@ -260,6 +304,42 @@
           <button class="chip add" onclick={() => openPicker(profile.id)}>
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
             {t("profiles.addApp")}
+          </button>
+        {/if}
+      </div>
+
+      <div class="chips">
+        {#each profile.sites as site (site.id)}
+          <span class="chip">
+            <svg class="globe" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /></svg>
+            {site.domain}
+            {#if !profile.inUse}
+              <button class="chip-x" aria-label={t("profiles.removeApp", { name: site.domain })} onclick={() => removeSite(profile, site.id)}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+              </button>
+            {/if}
+          </span>
+        {/each}
+        {#if addingSite === profile.id}
+          <form class="site-form" onsubmit={(e) => addSite(e, profile)}>
+            <input
+              bind:this={siteInput}
+              bind:value={siteText}
+              placeholder={t("profiles.sitePlaceholder")}
+              aria-label={t("profiles.sitePlaceholder")}
+              onkeydown={(e) => {
+                if (e.key === "Escape") addingSite = null;
+              }}
+              onblur={() => {
+                if (!siteText.trim()) addingSite = null;
+              }}
+            />
+            <button class="btn btn-small" type="submit" disabled={!siteText.trim()}>{t("profiles.addSite")}</button>
+          </form>
+        {:else}
+          <button class="chip add" onclick={() => openSiteInput(profile.id)}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+            {t("profiles.addSite")}
           </button>
         {/if}
       </div>
@@ -451,6 +531,36 @@
 
   .chip.add:hover {
     color: var(--text);
+  }
+
+  .globe {
+    color: var(--text-muted);
+  }
+
+  .site-form {
+    display: flex;
+    gap: var(--space-2);
+    flex: 1 1 280px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .site-form input {
+    height: 28px;
+  }
+
+  .site-form .btn-small {
+    min-height: 28px;
+  }
+
+  .setup {
+    margin: 0 10px var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    font-size: var(--text-sm);
   }
 
   .picker {

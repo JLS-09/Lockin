@@ -554,6 +554,23 @@ async fn remove_blocked_app(pool: State<'_, db::Pool>, entry_id: String) -> Comm
     block::remove_app(&pool, &entry_id).await.map_err(message)
 }
 
+/// Add a website to a profile; it's cleaned up first ("https://www.x.com/a" → "x.com").
+#[tauri::command]
+async fn add_blocked_site(
+    pool: State<'_, db::Pool>,
+    profile_id: String,
+    website: String,
+) -> CommandResult<String> {
+    block::add_site(&pool, &profile_id, &website)
+        .await
+        .map_err(message)
+}
+
+#[tauri::command]
+async fn remove_blocked_site(pool: State<'_, db::Pool>, entry_id: String) -> CommandResult<()> {
+    block::remove_site(&pool, &entry_id).await.map_err(message)
+}
+
 /// How often each app was closed during a session.
 #[tauri::command]
 async fn session_closes(
@@ -729,6 +746,8 @@ pub fn run() {
             add_blocked_app,
             add_blocked_program,
             remove_blocked_app,
+            add_blocked_site,
+            remove_blocked_site,
             session_closes,
         ])
         .run(tauri::generate_context!())

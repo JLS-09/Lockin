@@ -204,7 +204,8 @@
         <option value="">{t("sessionDialog.noProfile")}</option>
         {#each profiles as profile (profile.id)}
           <option value={profile.id}>
-            {profile.name} · {profile.apps.map((a) => a.name).join(", ") || t("sessionDialog.emptyProfile")}
+            {profile.name} · {[...profile.apps.map((a) => a.name), ...profile.sites.map((s) => s.domain)].join(", ") ||
+              t("sessionDialog.emptyProfile")}
           </option>
         {/each}
       </select>

@@ -12,7 +12,7 @@ study sessions that block distracting apps and websites.
 > **Status:** phases 1 to 3 of 6 are done: the TimeEdit import, the class tracking app
 > (week view, activities, templates, semester overview) and deadlines (by hand and from
 > Ufora, with the Urgent list) work. Phase 4 is under way: study sessions run, with the
-> daemon as a service, and close the apps on your block profile; websites come next. Built first for CachyOS with
+> daemon as a service, and block the apps and websites on your block profile. Built first for CachyOS with
 > KDE Plasma, with Windows and macOS support planned later.
 
 ## Features
@@ -45,14 +45,14 @@ study sessions that block distracting apps and websites.
   also when the app is closed, and syncs the feeds every hour. The Session page shows the
   running session with its timer, break credit (5 min per 30 min studied, B takes a
   break), its log and an emergency stop you hold open for two minutes
-- **Blocking apps:** your own block profiles (Settings → Block profiles, e.g. "Strict"
-  and "Light"), with apps picked from your menu (Flatpaks too) or added by program name.
-  While you study, the daemon closes them; breaks pause it
+- **Blocking apps and websites:** your own block profiles (Settings → Block profiles,
+  e.g. "Strict" and "Light"), with apps picked from your menu (Flatpaks too) or added by
+  program name, and websites. While you study, the daemon closes the apps and blocks the
+  websites in every browser through /etc/hosts; breaks pause it
 
 **Planned**
 
-- **Blocking websites** during study sessions, penalty points, tray icon and
-  notifications (phase 4)
+- **Penalty points** for the emergency button, tray icon and notifications (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
@@ -86,7 +86,7 @@ TimeEdit / Ufora feeds ──► lockin-daemon ──► SQLite ◄── Tauri 
 crates/
   lockin-core/       data model, database, migrations, TimeEdit import, activities
   lockin-daemon/     background service (`run`) and a command-line tool
-  lockin-helper/     root helper for browser block policies (planned)
+  lockin-helper/     root helper that blocks websites in /etc/hosts (through polkit)
 app/
   src/
     routes/          pages: week (/), semester, settings, and placeholders for later phases
@@ -139,6 +139,20 @@ tools/install-daemon.sh --remove   # stop and remove it again (your data stays)
 
 Run the script again after pulling changes. Without installing, `cargo run -p
 lockin-daemon -- run` runs it in the terminal until Ctrl+C; only one daemon runs at a time.
+
+### Blocking websites (one-time setup)
+
+Websites are blocked through Lockin's own section of `/etc/hosts`, which works in every
+browser (also with DNS-over-HTTPS) without restarting it, within about a minute. Only
+root may change that file, so the daemon asks a small helper through polkit:
+
+```bash
+tools/install-helper.sh            # installs lockin-helper and a polkit rule (asks for sudo once)
+tools/install-helper.sh --remove   # unblocks everything and removes it again
+```
+
+The rule lets your user run only `/usr/local/lib/lockin/lockin-helper`, which can only
+change Lockin's section of `/etc/hosts`, without a password.
 
 ## Importing the schedule
 
@@ -195,6 +209,7 @@ cargo run -p lockin-daemon -- sessions                    # last week's and the 
 cargo run -p lockin-daemon -- session-status              # the running session: study time, break credit
 cargo run -p lockin-daemon -- add-profile Strict          # a block profile
 cargo run -p lockin-daemon -- block Strict discord        # add an app (see installed-apps) or a program name
+cargo run -p lockin-daemon -- block-site Strict youtube.com  # add a website
 ```
 
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,

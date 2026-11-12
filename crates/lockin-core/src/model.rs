@@ -334,13 +334,23 @@ pub struct BlockedApp {
     pub flatpak_id: Option<String>,
 }
 
-/// A block profile with its apps, e.g. "Strict": Discord, Steam, Spotify.
+/// A website on a block profile, e.g. "youtube.com".
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlockedSite {
+    pub id: String,
+    pub profile_id: String,
+    pub domain: String,
+}
+
+/// A block profile with its apps and websites, e.g. "Strict": Discord, Steam, youtube.com.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BlockProfile {
     pub id: String,
     pub name: String,
     pub apps: Vec<BlockedApp>,
+    pub sites: Vec<BlockedSite>,
     /// True while the running session blocks with it: then apps can be added, not removed.
     pub in_use: bool,
 }
@@ -354,4 +364,15 @@ pub struct AppCloses {
     pub count: i64,
     /// The last time, RFC 3339 in UTC.
     pub last_at: String,
+}
+
+/// What the daemon blocks at a moment (`block::blocked_now`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct BlockedNow {
+    /// The running session, if any.
+    pub session_id: Option<String>,
+    /// Apps to close; empty on a break or without a profile.
+    pub apps: Vec<BlockedApp>,
+    /// Websites to block, as domains; empty on a break or without a profile.
+    pub sites: Vec<String>,
 }

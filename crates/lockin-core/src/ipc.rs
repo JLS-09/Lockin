@@ -79,6 +79,10 @@ pub struct DaemonStatus {
     pub started_at: String,
     /// The most recent feed sync, RFC 3339 in UTC; None without feeds.
     pub last_sync_at: Option<String>,
+    /// Why websites can't be blocked right now (the helper isn't set up, polkit
+    /// refused, …); None when blocking works or nothing needs blocking.
+    #[serde(default)]
+    pub websites_problem: Option<String>,
 }
 
 /// Where the socket lives: in the runtime folder, which only you can open and

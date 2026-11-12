@@ -1,17 +1,19 @@
-//! Block profiles: your own lists of apps to close during a study session.
+//! Block profiles: your own lists of apps to close and websites to block during
+//! a study session.
 //!
 //! You make the profiles ("Strict", "Light") and pick their apps; Lockin ships
 //! none. A session blocks with one profile (`study_session.profile_id`).
 //! While the running session uses a profile, apps can be added to it but not
 //! removed, and it can't be deleted: a running session can't be loosened.
 //! Matching apps to processes is in `apps.rs`; closing them in the daemon.
+//! Websites are blocked through /etc/hosts by lockin-helper (`lockin_helper::hosts`).
 
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use sqlx::sqlite::SqlitePool;
 
 use crate::apps::{self, InstalledApp, LOCKIN_APP_ID};
-use crate::model::{AppCloses, BlockProfile, BlockedApp};
+use crate::model::{AppCloses, BlockProfile, BlockedApp, BlockedNow, BlockedSite};
 use crate::{new_id, now_text};
 
 const APP_COLUMNS: &str = "id, profile_id, app_id, name, exec_names, flatpak_id";
@@ -28,6 +30,7 @@ pub async fn profiles(pool: &SqlitePool) -> Result<Vec<BlockProfile>> {
     for (id, name) in rows {
         list.push(BlockProfile {
             apps: apps_of(pool, &id).await?,
+            sites: sites_of(pool, &id).await?,
             in_use: running.as_deref() == Some(id.as_str()),
             id,
             name,
@@ -48,6 +51,66 @@ pub async fn apps_of(pool: &SqlitePool, profile_id: &str) -> Result<Vec<BlockedA
         .await?)
 }
 
+/// The websites of one profile, sorted.
+pub async fn sites_of(pool: &SqlitePool, profile_id: &str) -> Result<Vec<BlockedSite>> {
+    Ok(sqlx::query_as(
+        "SELECT id, profile_id, domain FROM block_site
+         WHERE profile_id = ? AND deleted = 0 ORDER BY domain",
+    )
+    .bind(profile_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Add a website to a profile. Whatever you type is cleaned up first
+/// ("https://www.youtube.com/watch" → "youtube.com"). Returns the new entry's id.
+pub async fn add_site(pool: &SqlitePool, profile_id: &str, website: &str) -> Result<String> {
+    let Some(domain) = lockin_helper::hosts::clean_domain(website) else {
+        bail!(
+            "\"{}\" isn't a website: type a name like youtube.com",
+            website.trim()
+        );
+    };
+    let already: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_site WHERE profile_id = ? AND domain = ? AND deleted = 0",
+    )
+    .bind(profile_id)
+    .bind(&domain)
+    .fetch_one(pool)
+    .await?;
+    if already > 0 {
+        bail!("{domain} is already on this profile");
+    }
+    let id = new_id();
+    sqlx::query("INSERT INTO block_site (id, profile_id, domain, updated_at) VALUES (?, ?, ?, ?)")
+        .bind(&id)
+        .bind(profile_id)
+        .bind(&domain)
+        .bind(now_text())
+        .execute(pool)
+        .await?;
+    Ok(id)
+}
+
+/// Take a website off its profile, unless the running session blocks with it.
+pub async fn remove_site(pool: &SqlitePool, entry_id: &str) -> Result<()> {
+    let profile_id: Option<String> =
+        sqlx::query_scalar("SELECT profile_id FROM block_site WHERE id = ?")
+            .bind(entry_id)
+            .fetch_optional(pool)
+            .await?;
+    let Some(profile_id) = profile_id else {
+        bail!("no website with id {entry_id} on a profile");
+    };
+    check_not_in_use(pool, &profile_id).await?;
+    sqlx::query("UPDATE block_site SET deleted = 1, updated_at = ? WHERE id = ?")
+        .bind(now_text())
+        .bind(entry_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// The profile of the running session, if it has one.
 pub async fn running_profile(pool: &SqlitePool) -> Result<Option<String>> {
     let profile: Option<Option<String>> = sqlx::query_scalar(
@@ -63,7 +126,7 @@ pub async fn running_profile(pool: &SqlitePool) -> Result<Option<String>> {
 async fn check_not_in_use(pool: &SqlitePool, profile_id: &str) -> Result<()> {
     if running_profile(pool).await?.as_deref() == Some(profile_id) {
         bail!(
-            "the running study session blocks with this profile: you can add apps now, and remove them after the session"
+            "the running study session blocks with this profile: you can add apps and websites now, and remove them after the session"
         );
     }
     Ok(())
@@ -231,23 +294,28 @@ pub async fn remove_app(pool: &SqlitePool, entry_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// What the daemon blocks right now: the apps of the running session's
-/// profile while you study, nothing during a break or without a session.
-pub async fn blocked_now(
-    pool: &SqlitePool,
-    now: DateTime<Utc>,
-) -> Result<(Option<String>, Vec<BlockedApp>)> {
+/// What the daemon blocks right now: the apps and websites of the running
+/// session's profile while you study; nothing during a break or without a session.
+pub async fn blocked_now(pool: &SqlitePool, now: DateTime<Utc>) -> Result<BlockedNow> {
     let Some(running) = crate::session::running(pool).await? else {
-        return Ok((None, Vec::new()));
+        return Ok(BlockedNow::default());
+    };
+    let mut blocked = BlockedNow {
+        session_id: Some(running.id.clone()),
+        ..Default::default()
     };
     if crate::session::state_now(pool, &running, now).await?.phase != "working" {
-        return Ok((Some(running.id), Vec::new()));
+        return Ok(blocked);
     }
-    let apps = match running_profile(pool).await? {
-        Some(profile) => apps_of(pool, &profile).await?,
-        None => Vec::new(),
-    };
-    Ok((Some(running.id), apps))
+    if let Some(profile) = running_profile(pool).await? {
+        blocked.apps = apps_of(pool, &profile).await?;
+        blocked.sites = sites_of(pool, &profile)
+            .await?
+            .into_iter()
+            .map(|site| site.domain)
+            .collect();
+    }
+    Ok(blocked)
 }
 
 /// Write down that the daemon closed `app` during a session.

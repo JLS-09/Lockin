@@ -3,6 +3,7 @@
 
 mod blocker;
 mod service;
+mod sites;
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
@@ -60,6 +61,8 @@ const USAGE: &str = "usage: lockin-daemon <command>
   add-profile <name>       make a block profile, e.g. Strict
   block <profile> <app>    add an app to a profile: a desktop file id from
                            installed-apps (e.g. discord), or else a program name
+  block-site <profile> <website>
+                           add a website to a profile, e.g. youtube.com
   installed-apps           the apps in your menu, with their desktop file id
                            and what blocking looks for
   find-process <text>      your running processes whose name, program or app id
@@ -91,6 +94,9 @@ async fn main() -> Result<()> {
                         println!(", last sync {}", last.with_timezone(&Local).format("%H:%M"));
                     }
                     None => println!(", no feeds yet"),
+                }
+                if let Some(problem) = status.websites_problem {
+                    println!("Websites: {problem}");
                 }
             }
         }
@@ -251,7 +257,12 @@ async fn main() -> Result<()> {
                 println!("No block profiles. Make one with: lockin-daemon add-profile Strict");
             }
             for profile in profiles {
-                let names: Vec<&str> = profile.apps.iter().map(|a| a.name.as_str()).collect();
+                let names: Vec<&str> = profile
+                    .apps
+                    .iter()
+                    .map(|a| a.name.as_str())
+                    .chain(profile.sites.iter().map(|s| s.domain.as_str()))
+                    .collect();
                 println!("{}: {}", profile.name, names.join(", "));
             }
         }
@@ -277,6 +288,14 @@ async fn main() -> Result<()> {
             }
         }
         (Some("find-process"), Some(text)) => find_process(&pool, text).await?,
+        (Some("block-site"), Some(profile)) => {
+            let Some(website) = args.get(3) else {
+                bail!(USAGE);
+            };
+            let profile_id = profile_id_for_name(&pool, profile).await?;
+            block::add_site(&pool, &profile_id, website).await?;
+            println!("Website added to {profile}.");
+        }
         (Some("installed-apps"), _) => {
             for app in lockin_core::apps::installed_apps() {
                 let flatpak = app
