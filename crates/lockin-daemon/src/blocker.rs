@@ -22,6 +22,19 @@ pub trait AppBlocker: Send {
     fn close(&mut self, apps: &[BlockedApp]) -> Vec<BlockedApp>;
 }
 
+/// Your own running processes as the blocker sees them, for
+/// `lockin-daemon find-process` (to see why an app is or isn't closed).
+pub fn own_processes() -> Vec<lockin_core::apps::ProcessInfo> {
+    #[cfg(target_os = "linux")]
+    {
+        linux::own_processes()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Vec::new()
+    }
+}
+
 /// The blocker for the system the daemon runs on.
 pub fn for_this_system() -> Box<dyn AppBlocker> {
     #[cfg(target_os = "linux")]
@@ -124,6 +137,23 @@ mod linux {
         }
     }
 
+    /// Every process of yours that isn't a kernel thread.
+    pub fn own_processes() -> Vec<ProcessInfo> {
+        let Ok(me) = std::fs::metadata("/proc/self").map(|m| m.uid()) else {
+            return Vec::new();
+        };
+        process_ids()
+            .into_iter()
+            .filter(|pid| {
+                std::fs::metadata(format!("/proc/{pid}"))
+                    .map(|m| m.uid())
+                    .ok()
+                    == Some(me)
+            })
+            .filter_map(read_process)
+            .collect()
+    }
+
     /// The process ids in /proc (its folders with a number for a name).
     fn process_ids() -> Vec<u32> {
         let Ok(entries) = std::fs::read_dir("/proc") else {
@@ -164,6 +194,7 @@ mod linux {
             pid,
             comm: comm.trim().to_string(),
             exe_name: exe.as_deref().and_then(file_name),
+            exe_path: exe.clone(),
             argv0_name: Some(argv0)
                 .filter(|a| !a.is_empty())
                 .and_then(|a| file_name(&a)),

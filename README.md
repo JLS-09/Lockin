@@ -201,7 +201,8 @@ Run the daemon without arguments to see all commands, including `rules`, `remove
 `remove-feed`, `keep-block` / `ignore-block` / `reset-block` for a manual exception per block,
 `deadlines` / `done-deadline` / `remove-deadline`, and for study sessions `remove-session`,
 `remove-following`, `break`, `resume`, `emergency-stop` and `tick` (what the running daemon
-does every few seconds), and `profiles` and `installed-apps` for blocking.
+does every few seconds), and `profiles`, `installed-apps` and `find-process <name>` (what
+the daemon sees of a running app, and whether a profile blocks it) for blocking.
 
 ## Development
 

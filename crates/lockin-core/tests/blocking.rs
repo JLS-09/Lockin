@@ -210,3 +210,35 @@ async fn closes_are_counted_per_app() {
     assert_eq!((closes[0].name.as_str(), closes[0].count), ("steam", 2));
     assert_eq!((closes[1].name.as_str(), closes[1].count), ("Discord", 1));
 }
+
+#[tokio::test]
+async fn apps_follow_what_is_installed_now() {
+    let pool = database().await;
+    let strict = block::add_profile(&pool, "Strict").await.unwrap();
+    // Added before Lockin knew Chrome's launcher script.
+    let mut chrome = InstalledApp {
+        id: "google-chrome".into(),
+        name: "Google Chrome".into(),
+        exec_names: vec!["google-chrome-stable".into(), "google-chrome".into()],
+        flatpak_id: None,
+    };
+    block::add_app(&pool, &strict, &chrome).await.unwrap();
+    block::add_program(&pool, &strict, "steam").await.unwrap();
+
+    // Now it does: the entry picks up the real program and its folder.
+    chrome
+        .exec_names
+        .extend(["/opt/google/chrome/".into(), "chrome".into()]);
+    let changed = block::refresh_apps(&pool, std::slice::from_ref(&chrome))
+        .await
+        .unwrap();
+    assert_eq!(changed, 1);
+    let apps = block::apps_of(&pool, &strict).await.unwrap();
+    assert_eq!(
+        apps[0].exec_names,
+        "google-chrome-stable\ngoogle-chrome\n/opt/google/chrome/\nchrome"
+    );
+    // Nothing new: nothing changes; the program added by name is left alone.
+    assert_eq!(block::refresh_apps(&pool, &[chrome]).await.unwrap(), 0);
+    assert_eq!(apps[1].exec_names, "steam");
+}

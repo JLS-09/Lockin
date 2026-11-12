@@ -60,7 +60,11 @@ const USAGE: &str = "usage: lockin-daemon <command>
   add-profile <name>       make a block profile, e.g. Strict
   block <profile> <app>    add an app to a profile: a desktop file id from
                            installed-apps (e.g. discord), or else a program name
-  installed-apps           the apps in your menu, with their desktop file id";
+  installed-apps           the apps in your menu, with their desktop file id
+                           and what blocking looks for
+  find-process <text>      your running processes whose name, program or app id
+                           contains <text>, and which profile app matches each:
+                           to see why an app is or isn't closed";
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -272,6 +276,7 @@ async fn main() -> Result<()> {
                 }
             }
         }
+        (Some("find-process"), Some(text)) => find_process(&pool, text).await?,
         (Some("installed-apps"), _) => {
             for app in lockin_core::apps::installed_apps() {
                 let flatpak = app
@@ -513,6 +518,81 @@ async fn show_urgent(pool: &db::Pool) -> Result<()> {
             course_name(&courses, item.course_id.as_deref()),
             when
         );
+    }
+    Ok(())
+}
+
+/// Show the processes matching `text` as the blocker sees them, and which
+/// app of which profile each one matches.
+async fn find_process(pool: &db::Pool, text: &str) -> Result<()> {
+    // First bring the profiles up to date, as the daemon does.
+    block::refresh_apps(pool, &lockin_core::apps::installed_apps()).await?;
+    let profiles = block::profiles(pool).await?;
+    let wanted = text.to_lowercase();
+    let mut found = 0;
+    for process in blocker::own_processes() {
+        let fields = [
+            Some(process.comm.as_str()),
+            process.exe_path.as_deref(),
+            process.argv0_name.as_deref(),
+            process.unit_app_id.as_deref(),
+            process.flatpak_id.as_deref(),
+        ];
+        if !fields
+            .iter()
+            .flatten()
+            .any(|f| f.to_lowercase().contains(&wanted))
+        {
+            continue;
+        }
+        found += 1;
+        println!("pid {}  name {}", process.pid, process.comm);
+        println!("  program  {}", process.exe_path.as_deref().unwrap_or("?"));
+        println!(
+            "  argv[0]  {}",
+            process.argv0_name.as_deref().unwrap_or("-")
+        );
+        println!(
+            "  app id   {}",
+            process
+                .unit_app_id
+                .as_deref()
+                .unwrap_or("- (not started from the menu)")
+        );
+        if let Some(flatpak) = &process.flatpak_id {
+            println!("  flatpak  {flatpak}");
+        }
+        let mut matched = Vec::new();
+        for profile in &profiles {
+            for app in &profile.apps {
+                if lockin_core::apps::matches(app, &process) {
+                    matched.push(format!("{} on {}", app.name, profile.name));
+                }
+            }
+        }
+        if matched.is_empty() {
+            println!("  blocked  no: no profile app matches");
+        } else {
+            println!("  blocked  yes: {}", matched.join(", "));
+        }
+    }
+    if found == 0 {
+        println!("No running process of yours matches \"{text}\".");
+    }
+    println!();
+    for profile in &profiles {
+        for app in &profile.apps {
+            let looks_for = app.exec_names.lines().collect::<Vec<_>>().join(", ");
+            let flatpak = app
+                .flatpak_id
+                .as_deref()
+                .map(|f| format!(", Flatpak {f}"))
+                .unwrap_or_default();
+            println!(
+                "{}: {} looks for: {looks_for}{flatpak}, app id {}",
+                profile.name, app.name, app.app_id
+            );
+        }
     }
     Ok(())
 }

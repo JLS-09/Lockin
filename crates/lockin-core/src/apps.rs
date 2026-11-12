@@ -6,8 +6,12 @@
 //! Flatpak id. The daemon then matches running processes against that, with
 //! three signals, any one of which is enough:
 //!
-//! 1. the program name: the process's executable, its first argument, or its
-//!    `comm` (the kernel's name, cut to 15 characters);
+//! 1. the program: its name (the process's executable, its first argument, or
+//!    its `comm`, the kernel's name cut to 15 characters), or the app's own
+//!    install folder (`/opt/google/chrome/`): a process whose executable lives
+//!    there belongs to the app. Many apps start through a script with another
+//!    name (Chrome's `google-chrome-stable` runs `/opt/google/chrome/chrome`), so
+//!    such scripts are read for the program they start;
 //! 2. the Flatpak id, for apps running in a Flatpak sandbox;
 //! 3. the app id in the process's systemd scope: KDE and GNOME start apps from
 //!    the menu in a scope named after their desktop file
@@ -78,6 +82,8 @@ pub struct ProcessInfo {
     pub comm: String,
     /// The file name of `/proc/<pid>/exe`.
     pub exe_name: Option<String>,
+    /// The full path of `/proc/<pid>/exe`, for matching an app's install folder.
+    pub exe_path: Option<String>,
     /// The file name of the first argument in `/proc/<pid>/cmdline`.
     pub argv0_name: Option<String>,
     /// The app id from its systemd scope (`unit_app_ids`).
@@ -107,6 +113,13 @@ pub fn matches(app: &BlockedApp, process: &ProcessInfo) -> bool {
         .map(str::trim)
         .filter(|n| !n.is_empty())
         .any(|name| {
+            if name.starts_with('/') {
+                // An install folder, e.g. "/opt/google/chrome/".
+                return process
+                    .exe_path
+                    .as_deref()
+                    .is_some_and(|path| path.starts_with(name));
+            }
             process.exe_name.as_deref() == Some(name)
                 || process.argv0_name.as_deref() == Some(name)
                 || process.comm == short_name(name)
@@ -201,12 +214,88 @@ fn file_name(path: &str) -> String {
         .unwrap_or_default()
 }
 
-/// The program names to match for an `Exec=` line, and a Flatpak id if it
-/// starts one. `resolve` turns a program into the file it really runs
-/// (following links, e.g. /usr/bin/discord → /opt/discord/Discord).
+/// What the file system says about a program from an `Exec=` line.
+pub struct ProgramFile {
+    /// The file it really runs, links followed (/usr/bin/discord → /opt/discord/Discord).
+    pub real_path: PathBuf,
+    /// Its text, when it's a script ("#!..."): the program it starts is in there.
+    pub script: Option<String>,
+}
+
+/// Folders that hold programs of many apps: never taken as one app's install folder.
+const SHARED_FOLDERS: &[&str] = &[
+    "/bin",
+    "/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/games",
+    "/usr/lib",
+    "/usr/lib64",
+    "/usr/libexec",
+    "/usr/share",
+    "/usr/local/bin",
+    "/usr/local/sbin",
+    "/usr/local/lib",
+    "/opt",
+    "/snap/bin",
+];
+
+/// The app's own folder for a program file, written with a slash at the end
+/// ("/opt/google/chrome/"), or None for a folder many apps share (/usr/bin) or
+/// one too close to the root to be an app's own.
+fn app_folder(program: &Path) -> Option<String> {
+    let folder = program.parent()?;
+    let text = folder.to_str()?;
+    let depth = folder.components().count().saturating_sub(1); // without the root
+    let shared = SHARED_FOLDERS.contains(&text) || text.ends_with("/.local/bin");
+    (!shared && depth >= 3).then(|| format!("{text}/"))
+}
+
+/// The programs a launcher script starts: its `exec` lines, e.g.
+/// `exec -a "$0" "$HERE/chrome" "$@"` → "chrome", or
+/// `exec /opt/onlyoffice/desktopeditors/DesktopEditors "$@"` → that path.
+fn script_targets(script: &str) -> Vec<String> {
+    let mut targets = Vec::new();
+    for line in script.lines() {
+        let Some(rest) = line.trim().strip_prefix("exec ") else {
+            continue;
+        };
+        let words = exec_words(rest);
+        let mut words = words.iter();
+        while let Some(word) = words.next() {
+            match word.as_str() {
+                // "-a NAME" sets the name the program sees; skip both.
+                "-a" => {
+                    words.next();
+                }
+                "-c" | "-l" | "--" => {}
+                // "exec < /dev/null", "exec > >(cat)", "exec 2> …": redirections, no program.
+                w if w.starts_with('<') || w.starts_with('>') || w.contains('(') => break,
+                w if w.starts_with(|c: char| c.is_ascii_digit()) && w.contains('>') => break,
+                w => {
+                    if let Some(after) = w.strip_prefix('$') {
+                        // "$HERE/chrome" → "chrome"; "$@" or "$BINARY" alone → nothing.
+                        if let Some((_, name)) = after.split_once('/') {
+                            targets.push(file_name(name));
+                        }
+                    } else {
+                        targets.push(w.to_string());
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    targets.retain(|t| !t.is_empty());
+    targets
+}
+
+/// What to match for an `Exec=` line, one entry per line of `block_app.exec_names`:
+/// program names, and install folders (ending in "/"). Also a Flatpak id if it
+/// starts one. `look` tells what a program file really is (see `ProgramFile`).
 fn exec_names(
     exec: &str,
-    resolve: &dyn Fn(&str) -> Option<String>,
+    look: &dyn Fn(&str) -> Option<ProgramFile>,
 ) -> (Vec<String>, Option<String>) {
     let words = exec_words(exec);
     // Skip "env" and "NAME=value" in front of the program.
@@ -232,22 +321,52 @@ fn exec_names(
     }
 
     let mut names = vec![file_name(program)];
-    if let Some(real) = resolve(program) {
-        names.push(real);
+    if let Some(file) = look(program) {
+        names.push(file_name(&file.real_path.to_string_lossy()));
+        names.extend(app_folder(&file.real_path));
+        // A launcher script: what it starts, and that program's own folder.
+        for target in script_targets(file.script.as_deref().unwrap_or_default()) {
+            names.push(file_name(&target));
+            if target.starts_with('/') {
+                names.extend(app_folder(Path::new(&target)));
+            }
+        }
     }
     (names, None)
+}
+
+/// Follow a program to its real file (through PATH and links), and read it
+/// when it's a script.
+fn look_up_program(program: &str) -> Option<ProgramFile> {
+    let path = if program.contains('/') {
+        PathBuf::from(program)
+    } else {
+        let paths = std::env::var_os("PATH")?;
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(program))
+            .find(|candidate| candidate.is_file())?
+    };
+    let real_path = std::fs::canonicalize(path).ok()?;
+    // Scripts are small; a big file is a real program, not worth reading.
+    let script = std::fs::metadata(&real_path)
+        .ok()
+        .filter(|m| m.len() < 64 * 1024)
+        .and_then(|_| std::fs::read(&real_path).ok())
+        .filter(|bytes| bytes.starts_with(b"#!"))
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned());
+    Some(ProgramFile { real_path, script })
 }
 
 /// Read one `.desktop` file. `id` is its desktop file id. None for files that
 /// aren't apps you'd see in the menu (hidden, no program, links).
 pub fn parse_desktop_entry(id: &str, text: &str) -> Option<InstalledApp> {
-    parse_desktop_entry_with(id, text, &resolve_program)
+    parse_desktop_entry_with(id, text, &look_up_program)
 }
 
 fn parse_desktop_entry_with(
     id: &str,
     text: &str,
-    resolve: &dyn Fn(&str) -> Option<String>,
+    look: &dyn Fn(&str) -> Option<ProgramFile>,
 ) -> Option<InstalledApp> {
     // Only the [Desktop Entry] group counts; actions come after it.
     let mut fields = HashMap::new();
@@ -273,7 +392,7 @@ fn parse_desktop_entry_with(
     let name = fields.get("Name")?.to_string();
     let exec = fields.get("Exec")?;
 
-    let (mut names, flatpak_from_exec) = exec_names(exec, resolve);
+    let (mut names, flatpak_from_exec) = exec_names(exec, look);
     if let Some(try_exec) = fields.get("TryExec") {
         names.push(file_name(try_exec));
     }
@@ -296,22 +415,6 @@ fn parse_desktop_entry_with(
         exec_names: unique,
         flatpak_id,
     })
-}
-
-/// The file a program really runs, if it's another name: "discord" found in
-/// PATH as /usr/bin/discord, a link to /opt/discord/Discord → "Discord".
-fn resolve_program(program: &str) -> Option<String> {
-    let path = if program.contains('/') {
-        PathBuf::from(program)
-    } else {
-        let paths = std::env::var_os("PATH")?;
-        std::env::split_paths(&paths)
-            .map(|dir| dir.join(program))
-            .find(|candidate| candidate.is_file())?
-    };
-    let real = std::fs::canonicalize(path).ok()?;
-    let name = real.file_name()?.to_string_lossy().into_owned();
-    (name != file_name(program)).then_some(name)
 }
 
 /// Where `.desktop` files live: your own first, then the system's, then Flatpak's.
@@ -391,7 +494,7 @@ fn collect(root: &Path, dir: &Path, found: &mut HashMap<String, Option<Installed
 mod tests {
     use super::*;
 
-    fn no_links(_: &str) -> Option<String> {
+    fn no_links(_: &str) -> Option<ProgramFile> {
         None
     }
 
@@ -412,10 +515,81 @@ mod tests {
 
     #[test]
     fn follows_the_link_to_the_real_program() {
-        let resolve = |p: &str| (p == "/usr/bin/discord").then(|| "Discord".to_string());
+        let look = |p: &str| {
+            (p == "/usr/bin/discord").then(|| ProgramFile {
+                real_path: PathBuf::from("/opt/discord/Discord"),
+                script: None,
+            })
+        };
         let text = "[Desktop Entry]\nType=Application\nName=Discord\nExec=/usr/bin/discord";
-        let app = parse_desktop_entry_with("discord", text, &resolve).unwrap();
+        let app = parse_desktop_entry_with("discord", text, &look).unwrap();
+        // "/opt/discord" is only two folders deep: too close to the root to be the app's own.
         assert_eq!(app.exec_names, vec!["discord", "Discord"]);
+    }
+
+    #[test]
+    fn reads_chromes_launcher_script() {
+        // /usr/bin/google-chrome-stable links to this script, which starts ./chrome.
+        let script = "#!/bin/bash\nHERE=\"`dirname \"$0\"`\"\nexec < /dev/null\n\
+                      exec > >(exec cat)\nexec 2> >(exec cat >&2)\n\
+                      exec -a \"$0\" \"$HERE/chrome\" \"$@\"\n";
+        let look = |p: &str| {
+            (p == "/usr/bin/google-chrome-stable").then(|| ProgramFile {
+                real_path: PathBuf::from("/opt/google/chrome/google-chrome"),
+                script: Some(script.to_string()),
+            })
+        };
+        let text = "[Desktop Entry]\nType=Application\nName=Google Chrome\n\
+                    Exec=/usr/bin/google-chrome-stable %U";
+        let app = parse_desktop_entry_with("google-chrome", text, &look).unwrap();
+        assert_eq!(
+            app.exec_names,
+            vec![
+                "google-chrome-stable",
+                "google-chrome",
+                "/opt/google/chrome/",
+                "chrome"
+            ]
+        );
+
+        // Any process running from Chrome's folder is Chrome (its helpers too).
+        let chrome = blocked("google-chrome", &app.exec_names.join("\n"), None);
+        let helper = ProcessInfo {
+            comm: "chrome_crashpad".into(),
+            exe_path: Some("/opt/google/chrome/chrome_crashpad_handler".into()),
+            ..Default::default()
+        };
+        assert!(matches(&chrome, &helper));
+        let other = ProcessInfo {
+            comm: "chromium".into(),
+            exe_path: Some("/usr/lib/chromium/chromium".into()),
+            ..Default::default()
+        };
+        assert!(!matches(&chrome, &other));
+    }
+
+    #[test]
+    fn reads_a_script_that_starts_a_program_elsewhere() {
+        let script = "#!/bin/sh\nexport LD_LIBRARY_PATH=/opt/onlyoffice/desktopeditors\n\
+                      exec /opt/onlyoffice/desktopeditors/DesktopEditors \"$@\"\n";
+        let look = |p: &str| {
+            (p == "/usr/bin/onlyoffice-desktopeditors").then(|| ProgramFile {
+                real_path: PathBuf::from("/usr/bin/onlyoffice-desktopeditors"),
+                script: Some(script.to_string()),
+            })
+        };
+        let text = "[Desktop Entry]\nType=Application\nName=ONLYOFFICE\n\
+                    Exec=/usr/bin/onlyoffice-desktopeditors %U";
+        let app = parse_desktop_entry_with("onlyoffice-desktopeditors", text, &look).unwrap();
+        // /usr/bin is shared by every app: not taken as this one's folder.
+        assert_eq!(
+            app.exec_names,
+            vec![
+                "onlyoffice-desktopeditors",
+                "DesktopEditors",
+                "/opt/onlyoffice/desktopeditors/"
+            ]
+        );
     }
 
     #[test]

@@ -58,6 +58,7 @@ pub async fn run(pool: db::Pool) -> Result<()> {
     let mut block_ticker = tokio::time::interval(Duration::from_secs(BLOCK_SECONDS));
     block_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     let mut blocker = blocker::for_this_system();
+    refresh_blocked_apps(&pool).await;
 
     let mut syncing: Option<JoinHandle<()>> = None;
     let mut last_sync_attempt: Option<DateTime<Utc>> = None;
@@ -71,7 +72,13 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                 let now = Utc::now();
 
                 match session::tick(&pool, now).await {
-                    Ok(result) => report(&pool, &result).await,
+                    Ok(result) => {
+                        report(&pool, &result).await;
+                        // A session starts: block with what's installed right now.
+                        if !result.started.is_empty() {
+                            refresh_blocked_apps(&pool).await;
+                        }
+                    }
                     // Keep going: the next tick tries again.
                     Err(error) => say(&format!("study sessions: {error:#}")),
                 }
@@ -195,6 +202,21 @@ async fn running(pool: &db::Pool) -> Result<String> {
     match session::running(pool).await? {
         Some(running) => Ok(running.id),
         None => bail!("no study session is running"),
+    }
+}
+
+/// Update what the profiles' apps look for from the apps installed now
+/// (`block::refresh_apps`). Reading the desktop files runs off the async threads.
+async fn refresh_blocked_apps(pool: &db::Pool) {
+    let Ok(installed) = tokio::task::spawn_blocking(lockin_core::apps::installed_apps).await else {
+        return;
+    };
+    match block::refresh_apps(pool, &installed).await {
+        Ok(0) => {}
+        Ok(changed) => say(&format!(
+            "updated {changed} apps on block profiles from the installed apps"
+        )),
+        Err(error) => say(&format!("blocking: {error:#}")),
     }
 }
 

@@ -284,3 +284,34 @@ pub async fn closes(pool: &SqlitePool, session_id: &str) -> Result<Vec<AppCloses
     .await?;
     Ok(rows)
 }
+
+/// Bring the apps on every profile up to date with the apps installed now:
+/// what to look for is copied when an app is added, and an update (or a better
+/// Lockin) can change it. Programs added by name stay as they are. Returns how
+/// many entries changed. The daemon runs this when it starts and when a
+/// session starts.
+pub async fn refresh_apps(pool: &SqlitePool, installed: &[InstalledApp]) -> Result<u32> {
+    let sql = format!("SELECT {APP_COLUMNS} FROM block_app WHERE deleted = 0");
+    let entries: Vec<BlockedApp> = sqlx::query_as(&sql).fetch_all(pool).await?;
+    let mut changed = 0;
+    for entry in entries {
+        let Some(app) = installed.iter().find(|a| a.id == entry.app_id) else {
+            continue; // added by name, or uninstalled: keep what we have
+        };
+        let exec_names = app.exec_names.join("\n");
+        if exec_names == entry.exec_names && app.flatpak_id == entry.flatpak_id {
+            continue;
+        }
+        sqlx::query(
+            "UPDATE block_app SET exec_names = ?, flatpak_id = ?, updated_at = ? WHERE id = ?",
+        )
+        .bind(&exec_names)
+        .bind(&app.flatpak_id)
+        .bind(now_text())
+        .bind(&entry.id)
+        .execute(pool)
+        .await?;
+        changed += 1;
+    }
+    Ok(changed)
+}
