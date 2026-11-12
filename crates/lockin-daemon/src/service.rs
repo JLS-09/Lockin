@@ -12,6 +12,8 @@
 //!   (`sites.rs`); on a break and after the session, unblock them;
 //! - answer the app on the socket (`lockin_core::ipc`): its status, and taking
 //!   a break, resuming or the emergency stop in the running session;
+//! - show the tray icon and send notifications (`desktop.rs`), and act on the
+//!   tray's menu;
 //! - every 2 seconds, look at the emergency stop: after 2 minutes kept open it
 //!   ends the session (−50 points), and it's dropped when the app stops checking
 //!   in (`lockin_core::emergency`).
@@ -24,6 +26,7 @@ use std::fs::{File, TryLockError};
 use std::path::Path;
 use std::time::Duration;
 
+use crate::desktop::{self, Desktop, TrayAction};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Local, Utc};
 use lockin_core::emergency::{Checked, EmergencyStop};
@@ -95,6 +98,8 @@ pub async fn run(pool: db::Pool) -> Result<()> {
     let mut sites = SiteBlocker::default();
     refresh_blocked_apps(&pool).await;
 
+    let (mut desktop, mut tray_clicks) = Desktop::new();
+
     let mut syncing: Option<JoinHandle<()>> = None;
     let mut last_sync_attempt: Option<DateTime<Utc>> = None;
 
@@ -118,6 +123,10 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                     Err(error) => say(&format!("study sessions: {error:#}")),
                 }
 
+                for line in desktop.update(&pool, now).await {
+                    say(&line);
+                }
+
                 let busy = syncing.as_ref().is_some_and(|task| !task.is_finished());
                 if !busy && sync_wanted(&pool, now, last_sync_attempt).await {
                     last_sync_attempt = Some(now);
@@ -129,6 +138,13 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                 enforce_blocking(&pool, blocker.as_mut(), &mut sites).await;
                 if let Ok(mut problem) = shared.websites_problem.lock() {
                     problem.clone_from(&sites.problem);
+                }
+            }
+            Some(click) = tray_clicks.recv() => {
+                tray_click(&pool, &shared, click).await;
+                // Show the change in the tray at once.
+                for line in desktop.update(&pool, Utc::now()).await {
+                    say(&line);
                 }
             }
             accepted = listener.accept() => {
@@ -242,6 +258,12 @@ async fn answer(
                 Err(error) => Response::failed(error),
             };
         }
+        Request::TestNotification => {
+            return match desktop::show_test(pool).await {
+                Ok(()) => Response::done(),
+                Err(error) => Response::failed(anyhow::anyhow!("{error}")),
+            };
+        }
         Request::EmergencyCancel => {
             if shared.emergency.lock().await.cancel() {
                 say("study session: emergency stop closed, keep studying");
@@ -255,6 +277,24 @@ async fn answer(
             Response::done()
         }
         Err(error) => Response::failed(error),
+    }
+}
+
+/// A click in the tray menu: the same as the app asking over the socket.
+async fn tray_click(pool: &db::Pool, shared: &Shared, click: TrayAction) {
+    let request = match click {
+        TrayAction::TakeBreak => Request::TakeBreak,
+        TrayAction::EndBreak => Request::Resume,
+        TrayAction::Open { session_page } => {
+            if let Err(error) = desktop::open_app(session_page) {
+                say(&format!("tray: {error}"));
+            }
+            return;
+        }
+    };
+    let response = answer(pool, shared, request, Utc::now()).await;
+    if let Some(error) = response.error {
+        say(&format!("tray: {error}"));
     }
 }
 

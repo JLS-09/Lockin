@@ -45,6 +45,8 @@ pub enum Request {
     EmergencyKeepOpen,
     /// "Keep studying": close the emergency stop.
     EmergencyCancel,
+    /// Show a test notification (Settings → Tray and notifications).
+    TestNotification,
 }
 
 /// The daemon's answer. `ok` false means `error` says why.

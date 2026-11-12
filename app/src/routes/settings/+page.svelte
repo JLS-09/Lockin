@@ -5,12 +5,14 @@
   // - Courses: the activity templates per course ("After every WPO: Exercises").
   //   The class panel links here with ?course=<id> to open that course.
   // - Block profiles: the apps a study session closes (the session dialog links here with #profiles)
-  // - Language
+  // - Tray and notifications: which notifications the daemon sends
+  // - Language (also saved for the daemon, which speaks the same language)
   import { tick } from "svelte";
   import { page } from "$app/state";
   import { api, type ActivityTemplate, type Course, type CourseKind } from "$lib/api";
   import BlockProfilesPanel from "$lib/components/BlockProfilesPanel.svelte";
   import CourseTemplates from "$lib/components/CourseTemplates.svelte";
+  import NotificationsPanel from "$lib/components/NotificationsPanel.svelte";
   import RulesPanel from "$lib/components/RulesPanel.svelte";
   import SchedulePanel from "$lib/components/SchedulePanel.svelte";
   import { i18n, locales, t, type Locale } from "$lib/i18n/index.svelte";
@@ -45,6 +47,12 @@
     if (wanted) document.getElementById(`course-${wanted}`)?.scrollIntoView({ block: "start" });
     else if (page.url.hash === "#profiles") document.getElementById("profiles")?.scrollIntoView({ block: "start" });
   });
+
+  // The app switches at once; the daemon (tray, notifications) follows on its next tick.
+  function chooseLanguage(locale: Locale) {
+    i18n.setLocale(locale);
+    api.setSetting("language", locale).catch((e) => (error = String(e)));
+  }
 
   // A new feed or rule can bring new courses and kinds of class.
   async function reloadCourses() {
@@ -107,6 +115,8 @@
 
   <BlockProfilesPanel />
 
+  <NotificationsPanel />
+
   <section class="panel language" aria-labelledby="language-heading">
     <div class="panel-head">
       <h2 class="panel-title" id="language-heading">{t("language.label")}</h2>
@@ -118,7 +128,7 @@
           class="btn"
           class:btn-primary={i18n.locale === locale}
           aria-pressed={i18n.locale === locale}
-          onclick={() => i18n.setLocale(locale)}
+          onclick={() => chooseLanguage(locale)}
         >
           {names[locale]}
         </button>

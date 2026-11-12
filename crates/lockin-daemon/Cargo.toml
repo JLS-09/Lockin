@@ -13,6 +13,9 @@ chrono.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 lockin-helper = { path = "../lockin-helper" }
+ksni = "0.3"
+notify-rust = "4"
+png = "0.17"
 
 # kill(), to close blocked apps (blocker.rs).
 [target.'cfg(unix)'.dependencies]

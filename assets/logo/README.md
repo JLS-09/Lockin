@@ -34,4 +34,5 @@ pnpm tauri icon ../assets/logo/png/lockin-icon-dark-1024.png
 rm -rf src-tauri/icons/android src-tauri/icons/ios   # desktop only
 ```
 
-The tray PNGs are copied to `app/src-tauri/icons/tray/` for the tray icon (phase 4).
+The daemon builds the tray PNGs (`png/tray/`) into its binary for the tray icon
+(`crates/lockin-daemon/src/desktop.rs`): the `on-dark` ones for a dark Plasma panel, `on-light` for a light one.

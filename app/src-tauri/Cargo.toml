@@ -24,6 +24,7 @@ chrono.workspace = true
 lockin-core.workspace = true
 # Opens Ufora links in the browser ("Open in Ufora"); allowed URLs are in capabilities/default.json.
 tauri-plugin-opener = "2"
+tauri-plugin-single-instance = "2"
 
 # Linux only: to set the GTK program name, see `run()` in src/lib.rs.
 # Same version Tauri itself uses, so nothing extra gets compiled.

@@ -20,7 +20,7 @@ use lockin_core::model::{
 };
 use lockin_core::{activity, block, db, deadline, import, paths, points, session, urgent};
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 /// Commands return errors as text: the frontend shows them as they are.
 type CommandResult<T> = Result<T, String>;
@@ -618,6 +618,45 @@ async fn daemon_status() -> CommandResult<Option<DaemonStatus>> {
     }
 }
 
+/// The settings the app and the daemon share (language, notifications);
+/// keys that were never set are missing.
+#[tauri::command]
+async fn settings(pool: State<'_, db::Pool>) -> CommandResult<HashMap<String, String>> {
+    lockin_core::settings::all(&pool).await.map_err(message)
+}
+
+/// Change one setting, e.g. ("notify.deadlines", "off"). The daemon reads it on
+/// its next tick.
+#[tauri::command]
+async fn set_setting(pool: State<'_, db::Pool>, key: String, value: String) -> CommandResult<()> {
+    lockin_core::settings::set(&pool, &key, &value)
+        .await
+        .map_err(message)
+}
+
+/// Ask the daemon to show a test notification.
+#[tauri::command]
+async fn test_notification() -> CommandResult<()> {
+    ipc::send(&Request::TestNotification)
+        .await
+        .map(|_| ())
+        .map_err(message)
+}
+
+/// The page asked for on the command line (`lockin-app --page session`, from
+/// the tray's "Emergency stop…"), or null.
+#[tauri::command]
+fn startup_page() -> Option<String> {
+    page_argument(&std::env::args().collect::<Vec<_>>())
+}
+
+/// The value after `--page`, if it's a page the app has.
+fn page_argument(args: &[String]) -> Option<String> {
+    let at = args.iter().position(|arg| arg == "--page")?;
+    let page = args.get(at + 1)?;
+    (page == "session").then(|| page.clone())
+}
+
 /// Ask the daemon to start a break in the running session.
 #[tauri::command]
 async fn take_break() -> CommandResult<()> {
@@ -706,6 +745,19 @@ pub fn run() {
     glib::set_prgname(Some("io.github.jls_09.lockin"));
 
     tauri::Builder::default()
+        // Only one Lockin at a time: starting it again (e.g. "Open Lockin" in
+        // the tray) brings the open window to the front instead, on the page
+        // asked for with --page.
+        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+            if let Some(page) = page_argument(&args) {
+                let _ = app.emit("open-page", page);
+            }
+        }))
         // "Open in Ufora" opens links in the browser; only Ufora links are
         // allowed (capabilities/default.json).
         .plugin(tauri_plugin_opener::init())
@@ -717,6 +769,10 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            settings,
+            set_setting,
+            test_notification,
+            startup_page,
             courses,
             course_kinds,
             week,

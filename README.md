@@ -9,10 +9,10 @@ A personal desktop app that keeps track of my class schedule and helps me actual
 it imports the schedule from TimeEdit, tracks what still needs doing per class, and runs
 study sessions that block distracting apps and websites.
 
-> **Status:** phases 1 to 3 of 6 are done: the TimeEdit import, the class tracking app
-> (week view, activities, templates, semester overview) and deadlines (by hand and from
-> Ufora, with the Urgent list) work. Phase 4 is under way: study sessions run, with the
-> daemon as a service, and block the apps and websites on your block profile. Built first for CachyOS with
+> **Status:** phases 1 to 4 of 6 are done: the TimeEdit import, the class tracking app
+> (week view, activities, templates, semester overview), deadlines (by hand and from
+> Ufora, with the Urgent list) and study mode (a daemon that runs your study sessions,
+> blocks apps and websites, and shows a tray icon and notifications) work. Built first for CachyOS with
 > KDE Plasma, with Windows and macOS support planned later.
 
 ## Features
@@ -50,10 +50,15 @@ study sessions that block distracting apps and websites.
   e.g. "Strict" and "Light"), with apps picked from your menu (Flatpaks too) or added by
   program name, and websites. While you study, the daemon closes the apps and blocks the
   websites in every browser through /etc/hosts; breaks pause it
+- **Tray icon and notifications** from the daemon, also while the app is closed: the
+  tray shows the running session ("Studying · 34 min left") with your break credit, takes
+  or ends a break and opens Lockin; notifications come 5 minutes before a session, at
+  its start and end, when you've earned a break or one is over, a day before a deadline
+  and when a blocked app was closed. Each kind can be switched off in Settings, which
+  also sends a test notification. Both follow the app's language
 
 **Planned**
 
-- **Tray icon and notifications** (phase 4)
 - **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
@@ -210,6 +215,7 @@ cargo run -p lockin-daemon -- sessions                    # last week's and the 
 cargo run -p lockin-daemon -- session-status              # the running session: study time, break credit
 cargo run -p lockin-daemon -- emergency-stop              # through the daemon: keep it running 2 min (Ctrl+C cancels)
 cargo run -p lockin-daemon -- points                      # your points and the latest changes
+cargo run -p lockin-daemon -- test-notification           # ask the daemon to show a test notification
 cargo run -p lockin-daemon -- add-profile Strict          # a block profile
 cargo run -p lockin-daemon -- block Strict discord        # add an app (see installed-apps) or a program name
 cargo run -p lockin-daemon -- block-site Strict youtube.com  # add a website
@@ -241,7 +247,8 @@ checks on every push.
 - **Smoothness:** in a dev build, switching weeks logs frame times to the console
   (right-click → Inspect).
 - **Task bar icon on KDE Wayland:** `tools/install-desktop-entry.sh` installs a desktop
-  entry and icon for the dev build (`--remove` takes them out again).
+  entry and icon for the dev build (`--remove` takes them out again). The tray's "Open
+  Lockin" and the notifications' icon use that desktop entry too.
 
 
 ## Roadmap
@@ -249,7 +256,7 @@ checks on every push.
 1. **Foundation:** workspace, database, TimeEdit import, filter rules *(done)*
 2. **Tracking classes:** week view, activities, templates, semester overview, NL/EN *(done)*
 3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(done)*
-4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications *(in progress)*
+4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications *(done)*
 5. **Cloud sync** with Supabase
 6. **Motivation and insight:** points, streaks, statistics and the shop
 

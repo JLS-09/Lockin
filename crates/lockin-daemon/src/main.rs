@@ -2,6 +2,7 @@
 //! every other command is a small command-line tool on the same database.
 
 mod blocker;
+mod desktop;
 mod service;
 mod sites;
 
@@ -59,6 +60,7 @@ const USAGE: &str = "usage: lockin-daemon <command>
   emergency-stop           end the running session through the daemon: keep it
                            running for 2 minutes (Ctrl+C keeps studying); -50 points
   points                   your points and the latest changes to them
+  test-notification        ask the daemon to show a test notification
 
   profiles                 the block profiles and their apps
   add-profile <name>       make a block profile, e.g. Strict
@@ -347,6 +349,12 @@ async fn main() -> Result<()> {
         }
         (Some("emergency-stop"), _) => emergency_stop().await?,
         (Some("points"), _) => show_points(&pool).await?,
+        (Some("test-notification"), _) => {
+            ipc::send(&Request::TestNotification).await?;
+            println!(
+                "Sent. If nothing showed up, the daemon's log says why (journalctl --user -u lockin)."
+            );
+        }
         _ => bail!(USAGE),
     }
 

@@ -44,6 +44,11 @@ class I18n {
   // Saved choice first, else the system language.
   locale = $state<Locale>(savedLocale() ?? systemLocale());
 
+  /** True when a language was chosen in Settings (not just the system's). */
+  get chosen(): boolean {
+    return savedLocale() !== null;
+  }
+
   get intlTag(): string {
     return intlTags[this.locale];
   }

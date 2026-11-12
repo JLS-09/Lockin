@@ -321,6 +321,13 @@ export interface DaemonStatus {
 }
 
 export const api = {
+  /** Settings shared with the daemon (language, notify.*); missing keys = default. */
+  settings: () => invoke<Record<string, string>>("settings"),
+  setSetting: (key: string, value: string) => invoke<void>("set_setting", { key, value }),
+  /** Ask the daemon to show a test notification. */
+  testNotification: () => invoke<void>("test_notification"),
+  /** The page asked for with `--page` when the app started (the tray's emergency stop), or null. */
+  startupPage: () => invoke<string | null>("startup_page"),
   courses: () => invoke<Course[]>("courses"),
   courseKinds: () => invoke<CourseKind[]>("course_kinds"),
   week: (date: string) => invoke<Week>("week", { date }),

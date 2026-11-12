@@ -440,6 +440,24 @@ fn application_dirs() -> Vec<PathBuf> {
     dirs
 }
 
+/// How to start the Lockin app: the `Exec=` of its desktop file (installed by
+/// tools/install-desktop-entry.sh, or by a package later), without "%U" and the
+/// like. None when it isn't installed.
+pub fn lockin_app_command() -> Option<Vec<String>> {
+    for dir in application_dirs() {
+        let Ok(text) = std::fs::read_to_string(dir.join(format!("{LOCKIN_APP_ID}.desktop"))) else {
+            continue;
+        };
+        let exec = text
+            .lines()
+            .skip_while(|line| line.trim() != "[Desktop Entry]")
+            .find_map(|line| line.strip_prefix("Exec="))?;
+        let words = exec_words(exec);
+        return (!words.is_empty()).then_some(words);
+    }
+    None
+}
+
 /// Every app in the menu, sorted by name. The first file with an id wins, so
 /// your own copy of a desktop file hides the system's.
 pub fn installed_apps() -> Vec<InstalledApp> {
