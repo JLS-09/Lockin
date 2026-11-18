@@ -8,6 +8,7 @@ mod sites;
 
 use anyhow::{Result, bail};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use lockin_core::account::{self, Cloud};
 use lockin_core::ipc::{self, Request};
 use lockin_core::model::{FeedEvent, FeedSync, SessionDetails, StudySession};
 use lockin_core::{block, db, deadline, import, paths, points, session, timeedit, urgent};
@@ -61,6 +62,12 @@ const USAGE: &str = "usage: lockin-daemon <command>
                            running for 2 minutes (Ctrl+C keeps studying); -50 points
   points                   your points and the latest changes to them
   test-notification        ask the daemon to show a test notification
+
+  account                  who is logged in on this computer
+  sign-up <email> <invite code>
+                           make a Lockin account (asks for a password)
+  log-in <email>           log in (asks for the password)
+  log-out                  log out on this computer
 
   profiles                 the block profiles and their apps
   add-profile <name>       make a block profile, e.g. Strict
@@ -354,6 +361,38 @@ async fn main() -> Result<()> {
             println!(
                 "Sent. If nothing showed up, the daemon's log says why (journalctl --user -u lockin)."
             );
+        }
+        (Some("account"), _) => match account::load(&paths::account_file()?)? {
+            Some(session) => println!("Logged in as {}.", session.email),
+            None => println!("Not logged in."),
+        },
+        (Some("sign-up"), Some(email)) => {
+            let Some(code) = args.get(3) else {
+                bail!(USAGE);
+            };
+            let password = read_password()?;
+            let session = account::sign_up(&Cloud::lockin(), email, &password, code).await?;
+            account::save(&paths::account_file()?, &session)?;
+            println!("Account made. Logged in as {}.", session.email);
+        }
+        (Some("log-in"), Some(email)) => {
+            let password = read_password()?;
+            let session = account::log_in(&Cloud::lockin(), email, &password).await?;
+            account::save(&paths::account_file()?, &session)?;
+            println!("Logged in as {}.", session.email);
+        }
+        (Some("log-out"), _) => {
+            let file = paths::account_file()?;
+            if let Some(session) = account::load(&file)? {
+                // Logged out here even when the server can't be reached.
+                if let Err(error) = account::log_out(&Cloud::lockin(), &session).await {
+                    println!(
+                        "The server didn't hear it ({error}), but this computer is logged out."
+                    );
+                }
+                account::remove(&file)?;
+            }
+            println!("Not logged in.");
         }
         _ => bail!(USAGE),
     }
@@ -838,4 +877,24 @@ async fn show_session_status(pool: &db::Pool) -> Result<()> {
         println!("  on a break until {}", ends.format("%H:%M:%S"));
     }
     Ok(())
+}
+
+/// Ask for a password on the terminal without showing it (`stty -echo`), or
+/// read one line from a pipe (`echo … | lockin-daemon log-in …`).
+fn read_password() -> Result<String> {
+    use std::io::{BufRead, IsTerminal, Write};
+    let terminal = std::io::stdin().is_terminal();
+    if terminal {
+        print!("Password: ");
+        std::io::stdout().flush()?;
+        let _ = std::process::Command::new("stty").arg("-echo").status();
+    }
+    let mut line = String::new();
+    let read = std::io::stdin().lock().read_line(&mut line);
+    if terminal {
+        let _ = std::process::Command::new("stty").arg("echo").status();
+        println!();
+    }
+    read?;
+    Ok(line.trim_end_matches(['\r', '\n']).to_string())
 }

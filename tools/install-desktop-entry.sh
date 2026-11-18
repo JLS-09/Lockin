@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Installs a .desktop file and the app icon for your user, so KDE Plasma shows
-# the Lockin icon in the task bar while you run `pnpm tauri dev`.
+# the Lockin icon in the task bar while you run `pnpm tauri dev`. It also makes
+# Lockin the app for invite links (lockin://invite/K7QM-2XWD): clicking one
+# opens Settings → Account with the code filled in.
 #
 # Why: on Wayland the window icon is ignored. KDE looks for a .desktop file
 # named after the window's app id (io.github.jls_09.lockin, set in
@@ -30,13 +32,18 @@ else
 Type=Application
 Name=Lockin
 Comment=Class tracker and study sessions
-Exec=$PWD/target/debug/lockin-app
+Exec=$PWD/target/debug/lockin-app %u
 Icon=$app_id
 StartupWMClass=$app_id
 Categories=Education;
 NoDisplay=true
+MimeType=x-scheme-handler/lockin;
 EOF
   echo "Installed $desktop_file and $icon_file"
+  # lockin:// links open Lockin.
+  if command -v xdg-mime > /dev/null; then
+    xdg-mime default "$app_id.desktop" x-scheme-handler/lockin
+  fi
 fi
 
 # Let KDE pick up the change right away.

@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use chrono::{DateTime, Local, NaiveDate, Utc};
+use lockin_core::account::{self, Account, AccountError, Cloud};
 use lockin_core::apps::{self, InstalledApp};
 use lockin_core::ipc::{self, DaemonStatus, Request};
 use lockin_core::model::{
@@ -650,6 +651,17 @@ fn startup_page() -> Option<String> {
     page_argument(&std::env::args().collect::<Vec<_>>())
 }
 
+/// The invite code of a `lockin://invite/…` link the app was opened with, or null.
+#[tauri::command]
+fn startup_invite() -> Option<String> {
+    invite_argument(&std::env::args().collect::<Vec<_>>())
+}
+
+/// The code of the first invite link among the arguments.
+fn invite_argument(args: &[String]) -> Option<String> {
+    args.iter().find_map(|arg| account::invite_from_link(arg))
+}
+
 /// The value after `--page`, if it's a page the app has.
 fn page_argument(args: &[String]) -> Option<String> {
     let at = args.iter().position(|arg| arg == "--page")?;
@@ -708,6 +720,62 @@ async fn session_points(
         .map_err(message)
 }
 
+// ---------- Account ----------
+//
+// The app logs in and out; the daemon keeps the login fresh (account::keep_fresh).
+// The tokens stay in Rust: the app only learns the email.
+
+/// Account errors the app knows reach it as their translation key
+/// ("account.error.invite"); anything else as text.
+fn account_message(error: AccountError) -> String {
+    match error {
+        AccountError::Server(_) => error.to_string(),
+        known => known.key().to_string(),
+    }
+}
+
+/// Who is logged in on this computer, or null.
+#[tauri::command]
+fn account() -> CommandResult<Option<Account>> {
+    let session = account::load(&paths::account_file().map_err(message)?).map_err(message)?;
+    Ok(session.map(|s| Account { email: s.email }))
+}
+
+/// Make an account with an invite code, and log in.
+#[tauri::command]
+async fn sign_up(email: String, password: String, invite_code: String) -> CommandResult<Account> {
+    let session = account::sign_up(&Cloud::lockin(), &email, &password, &invite_code)
+        .await
+        .map_err(account_message)?;
+    account::save(&paths::account_file().map_err(message)?, &session).map_err(message)?;
+    Ok(Account {
+        email: session.email,
+    })
+}
+
+#[tauri::command]
+async fn log_in(email: String, password: String) -> CommandResult<Account> {
+    let session = account::log_in(&Cloud::lockin(), &email, &password)
+        .await
+        .map_err(account_message)?;
+    account::save(&paths::account_file().map_err(message)?, &session).map_err(message)?;
+    Ok(Account {
+        email: session.email,
+    })
+}
+
+/// Log out on this computer, and on the server when it can be reached.
+/// Everything in the database stays.
+#[tauri::command]
+async fn log_out() -> CommandResult<()> {
+    let file = paths::account_file().map_err(message)?;
+    if let Some(session) = account::load(&file).map_err(message)? {
+        // Offline: this computer is logged out anyway; the login runs out by itself.
+        let _ = account::log_out(&Cloud::lockin(), &session).await;
+    }
+    account::remove(&file).map_err(message)
+}
+
 // ---------- Blocks ----------
 
 /// "Got it" on the schedule changes banner.
@@ -746,8 +814,8 @@ pub fn run() {
 
     tauri::Builder::default()
         // Only one Lockin at a time: starting it again (e.g. "Open Lockin" in
-        // the tray) brings the open window to the front instead, on the page
-        // asked for with --page.
+        // the tray, or an invite link) brings the open window to the front
+        // instead, on the page asked for with --page.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.unminimize();
@@ -756,6 +824,10 @@ pub fn run() {
             }
             if let Some(page) = page_argument(&args) {
                 let _ = app.emit("open-page", page);
+            }
+            // An invite link clicked while Lockin is open.
+            if let Some(code) = invite_argument(&args) {
+                let _ = app.emit("open-invite", code);
             }
         }))
         // "Open in Ufora" opens links in the browser; only Ufora links are
@@ -773,6 +845,11 @@ pub fn run() {
             set_setting,
             test_notification,
             startup_page,
+            startup_invite,
+            account,
+            sign_up,
+            log_in,
+            log_out,
             courses,
             course_kinds,
             week,

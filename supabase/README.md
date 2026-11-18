@@ -43,8 +43,8 @@ has to set anything up.
    insert into public.invite_code (note) values ('Jules') returning code;
    ```
 
-6. Copy the **Project URL** and the **publishable key** (`sb_publishable_…`, under Project
-   Settings → API Keys) for the app. Step 2 builds them in.
+6. The **Project URL** and the **publishable key** (`sb_publishable_…`, under Project
+   Settings → API Keys) are built into the app, in `crates/lockin-core/src/account.rs`.
 
 ## Inviting someone
 
@@ -52,10 +52,28 @@ has to set anything up.
 insert into public.invite_code (note) values ('Arne') returning code;
 ```
 
-Send them the code (`K7QM2XWD`; the app accepts it with or without a dash, in any case).
-A code works once and expires after 30 days; `expires_at = null` makes one that never
-expires. `select * from public.invite_code;` shows which codes were used and by whom (the
+Send them the code (`K7QM2XWD`; the app accepts it with or without a dash, in any case),
+or the link `lockin://invite/K7QM-2XWD`: once Lockin is installed, it opens Settings →
+Account with the code filled in. (Chat apps don't always make `lockin://` links
+clickable; the code always works.) They choose "Create account" there with their email
+and a password. A code works once and expires after 30 days; `expires_at = null` makes
+one that never expires. A signup that fails (a taken email, a short password) doesn't use
+the code up. `select * from public.invite_code;` shows which codes were used and by whom (the
 user id, as under Authentication → Users).
+
+## A forgotten password
+
+The free plan's mail service only sends to the project's team, so a reset email never
+reaches a friend. Set a new password for them in the SQL Editor and tell them:
+
+```sql
+update auth.users
+set encrypted_password = extensions.crypt('their-new-password', extensions.gen_salt('bf'))
+where email = 'arne@example.com';
+```
+
+Lockin encrypts synced feed links with a key from the password, so after a reset they
+paste their TimeEdit and Ufora links again in Settings; everything else stays.
 
 ## Changing the schema
 
@@ -64,11 +82,15 @@ file (`YYYYMMDDHHMMSS_what.sql`), test it locally, then run it in the SQL Editor
 
 ```bash
 tools/test-cloud-schema.sh   # needs Postgres installed (sudo pacman -S postgresql)
+tools/test-cloud-auth.sh     # the same with a real Supabase Auth: signing up, logging in
 ```
 
-The script starts a throwaway Postgres in a temporary folder, loads the stand-in for
-Supabase, runs every migration and the tests in `tests/schema_test.sql`. It never touches
-the real project.
+`test-cloud-schema.sh` starts a throwaway Postgres in a temporary folder, loads the
+stand-in for Supabase, runs every migration and the tests in `tests/schema_test.sql`.
+`test-cloud-auth.sh` runs Supabase's own Auth server (GoTrue, downloaded once from
+github.com/supabase/auth into `~/.cache/lockin/`) on such a Postgres, with the migrations
+and the invite hook, and runs `crates/lockin-core/tests/account.rs` against it. Neither
+touches the real project.
 
 ## Good to know
 

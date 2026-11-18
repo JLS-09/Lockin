@@ -42,8 +42,19 @@
       })
       .catch(() => {});
     const stopListening = listen<string>("open-page", (event) => goto(`/${event.payload}`));
+
+    // An invite link (lockin://invite/<code>) started the app, or was clicked while it's open.
+    const openInvite = (code: string) => goto(`/settings?invite=${encodeURIComponent(code)}#account`);
+    api
+      .startupInvite()
+      .then((code) => {
+        if (code) openInvite(code);
+      })
+      .catch(() => {});
+    const stopInvites = listen<string>("open-invite", (event) => openInvite(event.payload));
     return () => {
       stopListening.then((stop) => stop());
+      stopInvites.then((stop) => stop());
     };
   });
 

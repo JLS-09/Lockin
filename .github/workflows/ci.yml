@@ -45,3 +45,5 @@ jobs:
       # The cloud schema (supabase/migrations) on a throwaway Postgres; the
       # runner image has Postgres installed.
       - run: tools/test-cloud-schema.sh
+      # Accounts against a real Supabase Auth (downloaded from GitHub).
+      - run: tools/test-cloud-auth.sh

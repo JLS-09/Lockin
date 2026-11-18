@@ -32,6 +32,11 @@ pub fn runtime_dir() -> Option<PathBuf> {
         .map(|folder| folder.to_path_buf())
 }
 
+/// ~/.config/lockin/account.json: your login (see `account`), readable only by you.
+pub fn account_file() -> Result<PathBuf> {
+    Ok(config_dir()?.join("account.json"))
+}
+
 /// ~/.local/share/lockin/lockin.db
 pub fn database_file() -> Result<PathBuf> {
     Ok(data_dir()?.join("lockin.db"))

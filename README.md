@@ -56,10 +56,14 @@ study sessions that block distracting apps and websites.
   its start and end, when you've earned a break or one is over, a day before a deadline
   and when a blocked app was closed. Each kind can be switched off in Settings, which
   also sends a test notification. Both follow the app's language
+- **Accounts:** Settings → Account to log in, or to make an account with an invite code
+  (an invite link, `lockin://invite/<code>`, opens it with the code filled in). Everyone
+  shares one Supabase project and sees only their own data; the daemon keeps the login
+  fresh
 
 **Planned**
 
-- **Cloud sync** via Supabase, while staying fully usable offline (phase 5)
+- **Cloud sync** of your data to your account, while staying fully usable offline (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
 ## How it works
@@ -221,6 +225,8 @@ cargo run -p lockin-daemon -- test-notification           # ask the daemon to sh
 cargo run -p lockin-daemon -- add-profile Strict          # a block profile
 cargo run -p lockin-daemon -- block Strict discord        # add an app (see installed-apps) or a program name
 cargo run -p lockin-daemon -- block-site Strict youtube.com  # add a website
+cargo run -p lockin-daemon -- log-in you@example.com     # log in (asks for the password); log-out, account
+cargo run -p lockin-daemon -- sign-up you@example.com K7QM-2XWD  # make an account with an invite code
 ```
 
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
@@ -245,6 +251,10 @@ checks on every push.
 - **Cloud database changes** go in a new file in `supabase/migrations/`, tested with
   `tools/test-cloud-schema.sh` and then run in the Supabase SQL Editor
   (see [supabase/README.md](supabase/README.md)).
+- **Accounts** are tested against a real Supabase Auth on your computer:
+  `tools/test-cloud-auth.sh` downloads it once and runs `crates/lockin-core/tests/account.rs`.
+  `tools/test-cloud-auth.sh --serve` keeps it running with an invite code, to try the app
+  against it: `LOCKIN_AUTH_URL=http://127.0.0.1:9998 pnpm tauri dev`.
 - **Text in the UI** always comes from `app/src/lib/i18n/en.json` and `nl.json`;
   `pnpm check` fails when a key is missing from `nl.json`.
 - **Colors, sizes and durations** come from the CSS variables in
@@ -253,7 +263,7 @@ checks on every push.
   (right-click → Inspect).
 - **Task bar icon on KDE Wayland:** `tools/install-desktop-entry.sh` installs a desktop
   entry and icon for the dev build (`--remove` takes them out again). The tray's "Open
-  Lockin" and the notifications' icon use that desktop entry too.
+  Lockin", the notifications' icon and invite links (`lockin://`) use that desktop entry too.
 
 
 ## Roadmap

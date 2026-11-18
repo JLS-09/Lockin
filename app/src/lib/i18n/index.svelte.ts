@@ -14,7 +14,7 @@ import nl from "./nl.json";
 export type Locale = "en" | "nl";
 export const locales: Locale[] = ["en", "nl"];
 
-type Key = keyof typeof en;
+export type Key = keyof typeof en;
 type PluralKey = { [K in Key]: K extends `${infer Base}.one` ? Base : never }[Key];
 type Params = Record<string, string | number>;
 

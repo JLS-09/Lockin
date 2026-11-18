@@ -16,7 +16,9 @@
 //!   tray's menu;
 //! - every 2 seconds, look at the emergency stop: after 2 minutes kept open it
 //!   ends the session (−50 points), and it's dropped when the app stops checking
-//!   in (`lockin_core::emergency`).
+//!   in (`lockin_core::emergency`);
+//! - keep the Lockin login fresh: refresh it before it runs out
+//!   (`lockin_core::account::keep_fresh`).
 //!
 //! Only one daemon runs at a time: it holds a lock on a file next to the database.
 //! Its messages go to the terminal, or to the journal under systemd
@@ -29,6 +31,7 @@ use std::time::Duration;
 use crate::desktop::{self, Desktop, TrayAction};
 use anyhow::{Result, bail};
 use chrono::{DateTime, Local, Utc};
+use lockin_core::account::{self, Cloud, Kept};
 use lockin_core::emergency::{Checked, EmergencyStop};
 use lockin_core::ipc::{self, DaemonStatus, Request, Response};
 use lockin_core::model::TickResult;
@@ -75,6 +78,9 @@ pub const TICK_SECONDS: u64 = 5;
 pub const BLOCK_SECONDS: u64 = 2;
 /// After a failed sync (offline, say), wait this long before trying again.
 pub const SYNC_RETRY_MINUTES: i64 = 10;
+/// How often the daemon looks whether the login needs refreshing (it does
+/// 10 minutes before it runs out; a failed refresh is tried again then too).
+pub const LOGIN_CHECK_SECONDS: i64 = 60;
 
 /// Run until Ctrl+C or a stop from systemd.
 pub async fn run(pool: db::Pool) -> Result<()> {
@@ -102,6 +108,11 @@ pub async fn run(pool: db::Pool) -> Result<()> {
 
     let mut syncing: Option<JoinHandle<()>> = None;
     let mut last_sync_attempt: Option<DateTime<Utc>> = None;
+
+    let cloud = Cloud::lockin();
+    let account_file = paths::account_file()?;
+    let mut refreshing: Option<JoinHandle<()>> = None;
+    let mut last_login_check: Option<DateTime<Utc>> = None;
 
     let stop = stop_signal();
     tokio::pin!(stop);
@@ -131,6 +142,20 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                 if !busy && sync_wanted(&pool, now, last_sync_attempt).await {
                     last_sync_attempt = Some(now);
                     syncing = Some(tokio::spawn(sync(pool.clone())));
+                }
+
+                // The login, in its own task like the sync: a slow network
+                // never holds up a session.
+                let busy = refreshing.as_ref().is_some_and(|task| !task.is_finished());
+                let checked_lately = last_login_check
+                    .is_some_and(|at| (now - at).num_seconds() < LOGIN_CHECK_SECONDS);
+                if !busy && !checked_lately {
+                    last_login_check = Some(now);
+                    refreshing = Some(tokio::spawn(keep_login_fresh(
+                        cloud.clone(),
+                        account_file.clone(),
+                        now.timestamp(),
+                    )));
                 }
             }
             _ = block_ticker.tick() => {
@@ -421,6 +446,16 @@ async fn sync_wanted(
             say(&format!("checking the feeds: {error:#}"));
             false
         }
+    }
+}
+
+/// Refresh the login when it's about to run out. Runs as its own task.
+async fn keep_login_fresh(cloud: Cloud, file: std::path::PathBuf, now_unix: i64) {
+    match account::keep_fresh(&cloud, &file, now_unix).await {
+        Ok(Kept::Nothing) => {}
+        Ok(Kept::Refreshed) => say("Lockin login refreshed"),
+        Ok(Kept::LoggedOut) => say("the Lockin login ran out: log in again in Settings"),
+        Err(error) => say(&format!("refreshing the Lockin login: {error:#}")),
     }
 }
 

@@ -402,19 +402,21 @@ fn decode(png_bytes: &[u8]) -> Option<ksni::Icon> {
     let frame = reader.next_frame(&mut pixels).ok()?;
     let pixels = &pixels[..frame.buffer_size()];
     let mut data = Vec::with_capacity(frame.width as usize * frame.height as usize * 4);
+    // `as_chunks::<4>()` cuts the bytes into pixels of 4 (the `.0`; a leftover
+    // part that isn't a whole pixel would be in `.1`, and there is none).
     match frame.color_type {
         png::ColorType::Rgba => {
-            for p in pixels.chunks_exact(4) {
+            for p in pixels.as_chunks::<4>().0 {
                 data.extend_from_slice(&[p[3], p[0], p[1], p[2]]);
             }
         }
         png::ColorType::GrayscaleAlpha => {
-            for p in pixels.chunks_exact(2) {
+            for p in pixels.as_chunks::<2>().0 {
                 data.extend_from_slice(&[p[1], p[0], p[0], p[0]]);
             }
         }
         png::ColorType::Rgb => {
-            for p in pixels.chunks_exact(3) {
+            for p in pixels.as_chunks::<3>().0 {
                 data.extend_from_slice(&[255, p[0], p[1], p[2]]);
             }
         }
@@ -490,7 +492,7 @@ mod tests {
                 .all(|icon| icon.data.len() == (icon.width * icon.height * 4) as usize)
         );
         // Some pixels are drawn (not fully transparent).
-        assert!(dark[0].data.chunks_exact(4).any(|p| p[0] > 0));
+        assert!(dark[0].data.as_chunks::<4>().0.iter().any(|p| p[0] > 0));
         assert_eq!(icons(false).len(), 6);
     }
 }

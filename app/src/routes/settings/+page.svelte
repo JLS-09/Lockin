@@ -1,5 +1,7 @@
 <script lang="ts">
   // Settings. Not in the mockups; built in the style of the panels.
+  // - Account: log in, or make an account with an invite code (an invite link
+  //   opens Settings with ?invite=<code>#account)
   // - Schedule: the TimeEdit feeds (the week page links here with #schedule)
   // - Filter rules: which classes to ignore
   // - Courses: the activity templates per course ("After every WPO: Exercises").
@@ -10,6 +12,7 @@
   import { tick } from "svelte";
   import { page } from "$app/state";
   import { api, type ActivityTemplate, type Course, type CourseKind } from "$lib/api";
+  import AccountPanel from "$lib/components/AccountPanel.svelte";
   import BlockProfilesPanel from "$lib/components/BlockProfilesPanel.svelte";
   import CourseTemplates from "$lib/components/CourseTemplates.svelte";
   import NotificationsPanel from "$lib/components/NotificationsPanel.svelte";
@@ -27,6 +30,7 @@
   let loaded = $state(false);
 
   const wanted = $derived(page.url.searchParams.get("course"));
+  const invite = $derived(page.url.searchParams.get("invite"));
 
   async function load() {
     try {
@@ -46,6 +50,7 @@
     await tick();
     if (wanted) document.getElementById(`course-${wanted}`)?.scrollIntoView({ block: "start" });
     else if (page.url.hash === "#profiles") document.getElementById("profiles")?.scrollIntoView({ block: "start" });
+    else if (page.url.hash === "#account") document.getElementById("account")?.scrollIntoView({ block: "start" });
   });
 
   // The app switches at once; the daemon (tray, notifications) follows on its next tick.
@@ -92,6 +97,7 @@
 
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
+  <AccountPanel {invite} />
   <SchedulePanel onChange={reloadCourses} />
   <RulesPanel onChange={reloadCourses} />
 

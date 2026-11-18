@@ -1,6 +1,7 @@
 //! Shared logic for the Lockin app and daemon:
 //! data model, database access, schedule import, deadlines and (later) sync.
 
+pub mod account;
 pub mod activity;
 pub mod apps;
 pub mod block;

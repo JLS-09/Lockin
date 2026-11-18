@@ -14,6 +14,11 @@ export interface Course {
   color: string | null;
 }
 
+/** Who is logged in on this computer (the tokens stay in Rust). */
+export interface Account {
+  email: string;
+}
+
 export type BlockStatus = "normal" | "moved" | "cancelled";
 
 export interface ClassBlock {
@@ -328,6 +333,16 @@ export const api = {
   testNotification: () => invoke<void>("test_notification"),
   /** The page asked for with `--page` when the app started (the tray's emergency stop), or null. */
   startupPage: () => invoke<string | null>("startup_page"),
+  /** The code of the lockin://invite/… link the app was opened with. */
+  startupInvite: () => invoke<string | null>("startup_invite"),
+
+  /** Null when not logged in. */
+  account: () => invoke<Account | null>("account"),
+  /** Errors arrive as a translation key ("account.error.invite"), see accountError. */
+  signUp: (email: string, password: string, inviteCode: string) =>
+    invoke<Account>("sign_up", { email, password, inviteCode }),
+  logIn: (email: string, password: string) => invoke<Account>("log_in", { email, password }),
+  logOut: () => invoke<void>("log_out"),
   courses: () => invoke<Course[]>("courses"),
   courseKinds: () => invoke<CourseKind[]>("course_kinds"),
   week: (date: string) => invoke<Week>("week", { date }),
