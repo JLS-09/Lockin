@@ -144,6 +144,19 @@ pub async fn between(
     Ok(deadlines)
 }
 
+/// A Ufora deadline as stored, to compare with the feed before writing it.
+#[derive(sqlx::FromRow)]
+struct StoredDeadline {
+    source_id: Option<String>,
+    deleted: bool,
+    course_id: Option<String>,
+    title: String,
+    description: Option<String>,
+    url: Option<String>,
+    due_at: String,
+    status: String,
+}
+
 /// Save the deadlines of a Ufora feed, fetched at `now`.
 ///
 /// Like classes from TimeEdit, deadlines are matched on their iCal UID:
@@ -185,11 +198,13 @@ pub async fn save_ufora(
         seen_uids.push(deadline.uid.as_str());
         let due = time_text(deadline.due);
 
-        let existing: Option<String> =
-            sqlx::query_scalar("SELECT due_at FROM deadline WHERE ical_uid = ?")
-                .bind(&deadline.uid)
-                .fetch_optional(&mut *transaction)
-                .await?;
+        let existing: Option<StoredDeadline> = sqlx::query_as(
+            "SELECT source_id, deleted, course_id, title, description, url, due_at, status
+             FROM deadline WHERE ical_uid = ?",
+        )
+        .bind(&deadline.uid)
+        .fetch_optional(&mut *transaction)
+        .await?;
 
         match existing {
             None => {
@@ -215,8 +230,23 @@ pub async fn save_ufora(
                 .await?;
                 result.added += 1;
             }
-            Some(old_due) => {
-                let moved = old_due != due;
+            Some(old) => {
+                let moved = old.due_at != due;
+
+                // Seen again exactly as it was: nothing to write, so `updated_at`
+                // stays (see `db::save_feed`).
+                let unchanged = !moved
+                    && old.status != "cancelled"
+                    && !old.deleted
+                    && old.source_id.as_deref() == Some(source_id)
+                    && old.course_id.as_deref() == Some(course_id.as_str())
+                    && old.title == deadline.title
+                    && old.description == deadline.description
+                    && old.url == deadline.url;
+                if unchanged {
+                    result.updated += 1;
+                    continue;
+                }
                 // Keep "moved" once it's set; one that comes back after being
                 // cancelled becomes "normal" again.
                 let status_sql = if moved {
@@ -273,8 +303,8 @@ pub async fn save_ufora(
         }
     }
 
-    sqlx::query("UPDATE calendar_source SET last_fetched_at = ?, updated_at = ? WHERE id = ?")
-        .bind(&now_stamp)
+    // Kept on this computer only: an hourly fetch isn't a change to sync.
+    sqlx::query("UPDATE calendar_source SET last_fetched_at = ? WHERE id = ?")
         .bind(&now_stamp)
         .bind(source_id)
         .execute(&mut *transaction)

@@ -319,6 +319,22 @@ pub async fn course_kinds(pool: &SqlitePool) -> Result<Vec<CourseKind>> {
     Ok(kinds)
 }
 
+/// A class block as stored, to compare with the feed before writing it.
+#[derive(sqlx::FromRow)]
+struct StoredBlock {
+    source_id: Option<String>,
+    deleted: bool,
+    course_id: Option<String>,
+    kind: Option<String>,
+    title: String,
+    location: Option<String>,
+    description: Option<String>,
+    start_at: String,
+    end_at: String,
+    ignored_by_rule: bool,
+    status: String,
+}
+
 /// What one sync changed.
 #[derive(Debug, Default, PartialEq, serde::Serialize)]
 pub struct SyncResult {
@@ -336,6 +352,9 @@ pub struct SyncResult {
 /// - Known UID: update it. If the time changed, mark it as "moved".
 ///   The block keeps its id, so linked activities stay attached.
 ///   It now belongs to this source, and comes back if its old source was removed.
+///   A block that didn't change isn't written at all, so its `updated_at` stays:
+///   the cloud sync (phase 5) sends only rows that really changed, and an hourly
+///   sync on one computer never overwrites a change made on another.
 /// - A future block that is no longer in the feed: mark it as "cancelled"
 ///   instead of deleting it.
 pub async fn save_feed(
@@ -367,11 +386,14 @@ pub async fn save_feed(
         };
         let kind = parsed.and_then(|t| t.kind);
 
-        let existing: Option<(String, String)> =
-            sqlx::query_as("SELECT start_at, end_at FROM class_block WHERE ical_uid = ?")
-                .bind(&event.uid)
-                .fetch_optional(&mut *transaction)
-                .await?;
+        let existing: Option<StoredBlock> = sqlx::query_as(
+            "SELECT source_id, deleted, course_id, kind, title, location, description,
+                    start_at, end_at, ignored_by_rule, status
+             FROM class_block WHERE ical_uid = ?",
+        )
+        .bind(&event.uid)
+        .fetch_optional(&mut *transaction)
+        .await?;
 
         match existing {
             None => {
@@ -397,8 +419,24 @@ pub async fn save_feed(
                 .await?;
                 result.added += 1;
             }
-            Some((old_start, old_end)) => {
-                let moved = old_start != start || old_end != end;
+            Some(old) => {
+                let moved = old.start_at != start || old.end_at != end;
+
+                // Seen again exactly as it was: nothing to write.
+                let unchanged = !moved
+                    && old.status != "cancelled"
+                    && !old.deleted
+                    && old.source_id.as_deref() == Some(source_id)
+                    && old.course_id == course_id
+                    && old.kind == kind
+                    && old.title == event.title
+                    && old.location == event.location
+                    && old.description == event.description
+                    && old.ignored_by_rule == ignored;
+                if unchanged {
+                    result.updated += 1;
+                    continue;
+                }
 
                 // Keep "moved" once it's set; a block that comes back after
                 // being cancelled becomes "normal" again.
@@ -440,7 +478,7 @@ pub async fn save_feed(
                          SET moved_from = COALESCE(moved_from, ?), change_seen = 0
                          WHERE ical_uid = ?",
                     )
-                    .bind(&old_start)
+                    .bind(&old.start_at)
                     .bind(&event.uid)
                     .execute(&mut *transaction)
                     .await?;
@@ -473,8 +511,9 @@ pub async fn save_feed(
         }
     }
 
-    sqlx::query("UPDATE calendar_source SET last_fetched_at = ?, updated_at = ? WHERE id = ?")
-        .bind(&now)
+    // When this computer last fetched the feed: kept on this computer only, so
+    // it doesn't touch `updated_at` (an hourly fetch isn't a change to sync).
+    sqlx::query("UPDATE calendar_source SET last_fetched_at = ? WHERE id = ?")
         .bind(&now)
         .bind(source_id)
         .execute(&mut *transaction)

@@ -104,7 +104,9 @@ app/
     lib/styles/      design tokens (tokens.css) and shared styles
   src-tauri/         Tauri (Rust) side of the app: thin commands over lockin-core
 assets/logo/         logo and icon sources (SVG, PNG)
-tools/               scripts: daemon install (lockin.service), logo exports, desktop entry
+supabase/            the cloud database: schema migrations, their tests and setup steps
+tools/               scripts: daemon install (lockin.service), logo exports, desktop entry,
+                     cloud schema tests
 ```
 
 Data is stored in `~/.local/share/lockin/lockin.db`, config in `~/.config/lockin/`.
@@ -240,6 +242,9 @@ checks on every push.
 
 - **Database changes** go in a new file in `crates/lockin-core/migrations/`; they run
   automatically when the database is opened. Never edit a migration that has been pushed.
+- **Cloud database changes** go in a new file in `supabase/migrations/`, tested with
+  `tools/test-cloud-schema.sh` and then run in the Supabase SQL Editor
+  (see [supabase/README.md](supabase/README.md)).
 - **Text in the UI** always comes from `app/src/lib/i18n/en.json` and `nl.json`;
   `pnpm check` fails when a key is missing from `nl.json`.
 - **Colors, sizes and durations** come from the CSS variables in
@@ -257,7 +262,8 @@ checks on every push.
 2. **Tracking classes:** week view, activities, templates, semester overview, NL/EN *(done)*
 3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(done)*
 4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications *(done)*
-5. **Cloud sync** with Supabase
+5. **Cloud sync** with Supabase: one shared project, an account per person (with an
+   invite code), works offline *(in progress)*
 6. **Motivation and insight:** points, streaks, statistics and the shop
 
 ## License
