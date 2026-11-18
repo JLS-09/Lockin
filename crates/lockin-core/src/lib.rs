@@ -18,6 +18,7 @@ pub mod paths;
 pub mod points;
 pub mod session;
 pub mod settings;
+pub mod sync;
 pub mod timeedit;
 pub mod title;
 pub mod ufora;

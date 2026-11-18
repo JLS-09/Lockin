@@ -31,6 +31,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # The key that encrypts feed links is worked out from the password (account.rs).
 argon2 = "0.5"
+# Feed links are encrypted before they're synced (sync.rs).
+chacha20poly1305 = "0.10"
 
 # Profiles only work at the workspace root; in a member crate Cargo ignores them.
 # Small, fast release binaries (see https://tauri.app/concept/size/).

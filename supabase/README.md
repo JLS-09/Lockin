@@ -21,15 +21,23 @@ has to set anything up.
   stranger with the app can't make an account and use the project's free quota.
 - Feed links hold a personal key, so the app encrypts them before they're uploaded.
 
+## How the sync uses it
+
+The daemon sends rows that changed on a computer (an upsert per table through the REST
+API, `/rest/v1/<table>`) and fetches rows that reached the cloud since it last looked
+(by `synced_at`, the server's clock). The `keep_newer` trigger makes the cloud keep the
+row with the later `updated_at`, so a computer that was offline for a while can't
+overwrite a newer change. The code is in `crates/lockin-core/src/sync.rs`.
+
 ## Setting up the project (once)
 
 1. On [supabase.com](https://supabase.com), sign in and make a **new project** on the free
    plan: name `Lockin`, a region in the EU close by (e.g. West EU (Paris) or Central EU
    (Frankfurt)), and a generated database password. Keep that password in your password
    manager; Lockin itself never needs it. Leave the Data API on.
-2. **SQL Editor** → New query: paste all of
-   `migrations/20261118120000_lockin_schema.sql` and press **Run**. It should end with
-   "Success. No rows returned".
+2. **SQL Editor** → New query: paste all of each file in `migrations/`, oldest first
+   (`20261118120000_lockin_schema.sql`, then `20261118190000_keep_newer.sql`), and press
+   **Run** for each. Each should end with "Success. No rows returned".
 3. **Authentication** → Sign In / Providers → **Email**: keep it enabled, turn **Confirm
    email off** and save. Keep "Allow new users to sign up" on: the invite hook does the
    gatekeeping. (The free plan's own mail service only sends to the project's team, so
@@ -82,15 +90,15 @@ file (`YYYYMMDDHHMMSS_what.sql`), test it locally, then run it in the SQL Editor
 
 ```bash
 tools/test-cloud-schema.sh   # needs Postgres installed (sudo pacman -S postgresql)
-tools/test-cloud-auth.sh     # the same with a real Supabase Auth: signing up, logging in
+tools/test-cloud.sh          # accounts and the sync, against Supabase's own servers
 ```
 
 `test-cloud-schema.sh` starts a throwaway Postgres in a temporary folder, loads the
 stand-in for Supabase, runs every migration and the tests in `tests/schema_test.sql`.
-`test-cloud-auth.sh` runs Supabase's own Auth server (GoTrue, downloaded once from
-github.com/supabase/auth into `~/.cache/lockin/`) on such a Postgres, with the migrations
-and the invite hook, and runs `crates/lockin-core/tests/account.rs` against it. Neither
-touches the real project.
+`test-cloud.sh` runs Supabase's own Auth server (GoTrue) and its REST service
+(PostgREST), both downloaded once from GitHub into `~/.cache/lockin/`, on such a Postgres
+with the migrations and the invite hook, and runs `crates/lockin-core/tests/account.rs`
+and `sync.rs` against it. Neither touches the real project.
 
 ## Good to know
 

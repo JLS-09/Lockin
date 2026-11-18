@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# Test making accounts, logging in and out (crates/lockin-core/tests/account.rs)
-# against a real Supabase Auth (GoTrue) on this computer: a throwaway Postgres
-# with Supabase's roles, GoTrue's own migrations, Lockin's cloud schema
-# (supabase/migrations) and the invite hook, like the real project. Nothing
-# touches the real project.
+# Test accounts and the cloud sync (crates/lockin-core/tests/account.rs and
+# sync.rs) against a small Supabase on this computer: a throwaway Postgres with
+# Supabase's roles, Supabase's own Auth server (GoTrue) with its migrations,
+# Lockin's cloud schema (supabase/migrations) and the invite hook, and PostgREST,
+# the REST service Supabase puts in front of the database. Nothing touches the
+# real project.
 #
-# GoTrue is downloaded once from github.com/supabase/auth into ~/.cache/lockin/.
+# GoTrue and PostgREST are downloaded once from GitHub into ~/.cache/lockin/.
 # Needs Postgres installed (CachyOS: sudo pacman -S postgresql), not running.
+#
+# Usage: tools/test-cloud.sh           run the tests
+#        tools/test-cloud.sh --serve   keep it running (with an invite code) to try
+#                                      the app against it, see the end of this file
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 gotrue_version=v2.198.0
+postgrest_version=v13.0.8
 pg_port=54331
 auth_port=9998
+rest_port=9997
 
 # initdb and pg_ctl: on the PATH (Arch) or in Postgres' own bin folder (Debian).
 bin=""
@@ -37,10 +44,21 @@ if [ ! -x "$cache/auth" ]; then
         | tar -xz -C "$cache"
 fi
 
+# PostgREST, once.
+rest_cache="${XDG_CACHE_HOME:-$HOME/.cache}/lockin/postgrest-$postgrest_version"
+if [ ! -x "$rest_cache/postgrest" ]; then
+    echo "Downloading PostgREST $postgrest_version"
+    mkdir -p "$rest_cache"
+    curl -fsSL "https://github.com/PostgREST/postgrest/releases/download/$postgrest_version/postgrest-$postgrest_version-linux-static-x86-64.tar.xz" \
+        | tar -xJ -C "$rest_cache"
+fi
+
 folder="$(mktemp -d)"
 gotrue_pid=""
+rest_pid=""
 cleanup() {
     [ -n "$gotrue_pid" ] && kill "$gotrue_pid" 2>/dev/null || true
+    [ -n "$rest_pid" ] && kill "$rest_pid" 2>/dev/null || true
     "${bin}pg_ctl" -D "$folder/data" -m immediate stop >/dev/null 2>&1 || true
     rm -rf "$folder"
 }
@@ -61,6 +79,9 @@ create role anon nologin;
 create role authenticated nologin;
 create role service_role nologin bypassrls;
 create role supabase_auth_admin login password 'auth' noinherit createrole;
+-- PostgREST logs in as authenticator and switches to anon or authenticated.
+create role authenticator login password 'rest' noinherit;
+grant anon, authenticated, service_role to authenticator;
 create schema auth authorization supabase_auth_admin;
 create schema extensions;
 create extension pgcrypto schema extensions;
@@ -74,7 +95,8 @@ export GOTRUE_DB_DRIVER=postgres
 export GOTRUE_DB_DATABASE_URL="postgres://supabase_auth_admin:auth@127.0.0.1:$pg_port/postgres?sslmode=disable"
 export GOTRUE_DB_NAMESPACE=auth
 export GOTRUE_DB_MIGRATIONS_PATH="$cache/migrations"
-export GOTRUE_JWT_SECRET=lockin-local-test-secret-of-32-characters
+jwt_secret=lockin-local-test-secret-of-32-characters
+export GOTRUE_JWT_SECRET=$jwt_secret
 export GOTRUE_JWT_EXP=3600
 export GOTRUE_JWT_AUD=authenticated
 export GOTRUE_JWT_DEFAULT_GROUP_NAME=authenticated
@@ -100,21 +122,35 @@ done
 
 "$cache/auth" serve >"$folder/auth.log" 2>&1 &
 gotrue_pid=$!
+
+PGRST_DB_URI="postgres://authenticator:rest@127.0.0.1:$pg_port/postgres" \
+PGRST_DB_SCHEMAS=public \
+PGRST_DB_ANON_ROLE=anon \
+PGRST_JWT_SECRET=$jwt_secret \
+PGRST_SERVER_HOST=127.0.0.1 \
+PGRST_SERVER_PORT=$rest_port \
+PGRST_LOG_LEVEL=crit \
+    "$rest_cache/postgrest" >"$folder/postgrest.log" 2>&1 &
+rest_pid=$!
+
 for _ in $(seq 50); do
-    curl -fs "http://127.0.0.1:$auth_port/health" >/dev/null 2>&1 && break
+    curl -fs "http://127.0.0.1:$auth_port/health" >/dev/null 2>&1 \
+        && curl -fs "http://127.0.0.1:$rest_port/" >/dev/null 2>&1 && break
     sleep 0.2
 done
 
 export LOCKIN_TEST_AUTH_URL="http://127.0.0.1:$auth_port"
+export LOCKIN_TEST_REST_URL="http://127.0.0.1:$rest_port"
 export LOCKIN_TEST_DATABASE_URL="$database"
 export NO_PROXY="127.0.0.1,localhost${NO_PROXY:+,$NO_PROXY}" no_proxy="127.0.0.1,localhost${no_proxy:+,$no_proxy}"
 
 if [ "${1:-}" = "--serve" ]; then
-    # For trying the app against it: LOCKIN_AUTH_URL=http://127.0.0.1:9998
-    echo "Supabase Auth on $LOCKIN_TEST_AUTH_URL, database $database. Ctrl+C stops."
+    # For trying the app or the CLI against it:
+    #   LOCKIN_AUTH_URL=http://127.0.0.1:9998 LOCKIN_REST_URL=http://127.0.0.1:9997 pnpm tauri dev
+    echo "Auth on $LOCKIN_TEST_AUTH_URL, REST on $LOCKIN_TEST_REST_URL, database $database. Ctrl+C stops."
     echo "Invite code: $(psql "$database" -X -qAt -c "insert into public.invite_code (note) values ('try') returning code")"
     wait "$gotrue_pid"
 else
     cd "$repo"
-    cargo test -p lockin-core --test account -- --test-threads=1
+    cargo test -p lockin-core --test account --test sync -- --test-threads=1
 fi

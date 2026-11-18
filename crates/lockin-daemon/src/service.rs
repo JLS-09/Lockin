@@ -18,7 +18,8 @@
 //!   ends the session (−50 points), and it's dropped when the app stops checking
 //!   in (`lockin_core::emergency`);
 //! - keep the Lockin login fresh: refresh it before it runs out
-//!   (`lockin_core::account::keep_fresh`).
+//!   (`lockin_core::account::keep_fresh`);
+//! - while logged in, sync with the cloud every few minutes (`lockin_core::sync`).
 //!
 //! Only one daemon runs at a time: it holds a lock on a file next to the database.
 //! Its messages go to the terminal, or to the journal under systemd
@@ -35,7 +36,7 @@ use lockin_core::account::{self, Cloud, Kept};
 use lockin_core::emergency::{Checked, EmergencyStop};
 use lockin_core::ipc::{self, DaemonStatus, Request, Response};
 use lockin_core::model::TickResult;
-use lockin_core::{block, db, import, now_text, paths, session};
+use lockin_core::{block, db, import, now_text, paths, session, sync};
 
 use crate::blocker::{self, AppBlocker};
 use crate::sites::SiteBlocker;
@@ -81,6 +82,8 @@ pub const SYNC_RETRY_MINUTES: i64 = 10;
 /// How often the daemon looks whether the login needs refreshing (it does
 /// 10 minutes before it runs out; a failed refresh is tried again then too).
 pub const LOGIN_CHECK_SECONDS: i64 = 60;
+/// How often the daemon syncs with the cloud while you're logged in.
+pub const CLOUD_SYNC_SECONDS: i64 = 120;
 
 /// Run until Ctrl+C or a stop from systemd.
 pub async fn run(pool: db::Pool) -> Result<()> {
@@ -113,6 +116,8 @@ pub async fn run(pool: db::Pool) -> Result<()> {
     let account_file = paths::account_file()?;
     let mut refreshing: Option<JoinHandle<()>> = None;
     let mut last_login_check: Option<DateTime<Utc>> = None;
+    let mut cloud_syncing: Option<JoinHandle<()>> = None;
+    let mut last_cloud_sync: Option<DateTime<Utc>> = None;
 
     let stop = stop_signal();
     tokio::pin!(stop);
@@ -155,6 +160,19 @@ pub async fn run(pool: db::Pool) -> Result<()> {
                         cloud.clone(),
                         account_file.clone(),
                         now.timestamp(),
+                    )));
+                }
+
+                // The cloud sync, also in its own task.
+                let busy = cloud_syncing.as_ref().is_some_and(|task| !task.is_finished());
+                let synced_lately = last_cloud_sync
+                    .is_some_and(|at| (now - at).num_seconds() < CLOUD_SYNC_SECONDS);
+                if !busy && !synced_lately {
+                    last_cloud_sync = Some(now);
+                    cloud_syncing = Some(tokio::spawn(cloud_sync(
+                        pool.clone(),
+                        cloud.clone(),
+                        account_file.clone(),
                     )));
                 }
             }
@@ -456,6 +474,42 @@ async fn keep_login_fresh(cloud: Cloud, file: std::path::PathBuf, now_unix: i64)
         Ok(Kept::Refreshed) => say("Lockin login refreshed"),
         Ok(Kept::LoggedOut) => say("the Lockin login ran out: log in again in Settings"),
         Err(error) => say(&format!("refreshing the Lockin login: {error:#}")),
+    }
+}
+
+/// Sync with the cloud when logged in. Says what came and went, and a problem
+/// only when it's new (not every two minutes while offline). Runs as its own task.
+async fn cloud_sync(pool: db::Pool, cloud: Cloud, file: std::path::PathBuf) {
+    let session = match account::load(&file) {
+        Ok(Some(session)) => session,
+        Ok(None) => return,
+        Err(error) => {
+            say(&format!("cloud sync: {error:#}"));
+            return;
+        }
+    };
+    let before = sync::state(&pool, "last_error")
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    match sync::sync(&pool, &cloud, &session, Utc::now()).await {
+        Ok(report) => {
+            if report.sent > 0 || report.received > 0 {
+                say(&format!(
+                    "cloud sync: {} sent, {} received",
+                    report.sent, report.received
+                ));
+            }
+            for skipped in &report.skipped {
+                say(&format!("cloud sync skipped {skipped}"));
+            }
+            if !before.is_empty() {
+                say("cloud sync works again");
+            }
+        }
+        Err(error) if error.key() != before => say(&format!("cloud sync: {error}")),
+        Err(_) => {}
     }
 }
 

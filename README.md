@@ -56,14 +56,16 @@ study sessions that block distracting apps and websites.
   its start and end, when you've earned a break or one is over, a day before a deadline
   and when a blocked app was closed. Each kind can be switched off in Settings, which
   also sends a test notification. Both follow the app's language
-- **Accounts:** Settings → Account to log in, or to make an account with an invite code
-  (an invite link, `lockin://invite/<code>`, opens it with the code filled in). Everyone
-  shares one Supabase project and sees only their own data; the daemon keeps the login
-  fresh
+- **Accounts and cloud sync:** Settings → Account to log in, or to make an account with
+  an invite code (an invite link, `lockin://invite/<code>`, opens it with the code filled
+  in). While you're logged in, the daemon syncs your data with your account every two
+  minutes: the same schedule, activities, deadlines and sessions on every computer, and
+  everything keeps working offline. Everyone shares one Supabase project and sees only
+  their own data; feed links are encrypted before they leave your computer
 
 **Planned**
 
-- **Cloud sync** of your data to your account, while staying fully usable offline (phase 5)
+- **Sync status in the app** and setting up a second computer that already has data (phase 5)
 - **Points, streaks, statistics** and a cosmetic shop with themes and pets (phase 6)
 
 ## How it works
@@ -227,6 +229,7 @@ cargo run -p lockin-daemon -- block Strict discord        # add an app (see inst
 cargo run -p lockin-daemon -- block-site Strict youtube.com  # add a website
 cargo run -p lockin-daemon -- log-in you@example.com     # log in (asks for the password); log-out, account
 cargo run -p lockin-daemon -- sign-up you@example.com K7QM-2XWD  # make an account with an invite code
+cargo run -p lockin-daemon -- cloud-sync                  # sync with the cloud now
 ```
 
 Run the daemon without arguments to see all commands, including `rules`, `remove-rule`,
@@ -251,10 +254,11 @@ checks on every push.
 - **Cloud database changes** go in a new file in `supabase/migrations/`, tested with
   `tools/test-cloud-schema.sh` and then run in the Supabase SQL Editor
   (see [supabase/README.md](supabase/README.md)).
-- **Accounts** are tested against a real Supabase Auth on your computer:
-  `tools/test-cloud-auth.sh` downloads it once and runs `crates/lockin-core/tests/account.rs`.
-  `tools/test-cloud-auth.sh --serve` keeps it running with an invite code, to try the app
-  against it: `LOCKIN_AUTH_URL=http://127.0.0.1:9998 pnpm tauri dev`.
+- **Accounts and the sync** are tested against a small Supabase on your computer
+  (Supabase's own Auth server and PostgREST on a throwaway Postgres): `tools/test-cloud.sh`
+  downloads them once and runs `crates/lockin-core/tests/account.rs` and `sync.rs`.
+  `tools/test-cloud.sh --serve` keeps it running with an invite code, to try the app
+  against it: `LOCKIN_AUTH_URL=http://127.0.0.1:9998 LOCKIN_REST_URL=http://127.0.0.1:9997 pnpm tauri dev`.
 - **Text in the UI** always comes from `app/src/lib/i18n/en.json` and `nl.json`;
   `pnpm check` fails when a key is missing from `nl.json`.
 - **Colors, sizes and durations** come from the CSS variables in
@@ -273,7 +277,7 @@ checks on every push.
 3. **Deadlines:** manual deadlines, the Ufora feed and the "urgent" list *(done)*
 4. **Study mode:** daemon as a service, blocking, breaks, tray and notifications *(done)*
 5. **Cloud sync** with Supabase: one shared project, an account per person (with an
-   invite code), works offline *(in progress)*
+   invite code), works offline *(in progress: accounts and the sync work)*
 6. **Motivation and insight:** points, streaks, statistics and the shop
 
 ## License

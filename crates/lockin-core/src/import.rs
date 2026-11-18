@@ -109,7 +109,15 @@ fn feed_sync(source_id: String, kind: &str, result: SyncResult) -> FeedSync {
 pub async fn sync_all(pool: &Pool) -> Result<Vec<FeedSync>> {
     let mut results = Vec::new();
     for source in db::sources(pool).await? {
-        let outcome = import_source(pool, &source.id, &source.url).await;
+        // A link synced from another computer that this login can't decrypt
+        // (the password changed since): it has to be pasted again.
+        let outcome = if crate::sync::is_locked(&source.url) {
+            Err(anyhow::anyhow!(
+                "this link was saved with another password: paste it again in Settings"
+            ))
+        } else {
+            import_source(pool, &source.id, &source.url).await
+        };
         results.push(match outcome {
             Ok(result) => feed_sync(source.id, &source.kind, result),
             Err(error) => FeedSync {
@@ -193,6 +201,9 @@ pub async fn import_history_text(
 /// "cloud.timeedit.net" for a web link, the file name for a `file://` source.
 /// Never the path or query, where TimeEdit and Ufora put the personal key.
 fn origin(url: &str) -> String {
+    if crate::sync::is_locked(url) {
+        return "locked link".to_string();
+    }
     if let Some(path) = url.strip_prefix("file://") {
         return path.rsplit('/').next().unwrap_or(path).to_string();
     }

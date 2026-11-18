@@ -117,6 +117,33 @@ reset role;
 
 
 -- ---------------------------------------------------------------------------
+-- The newer change wins (20261118190000_keep_newer.sql)
+-- ---------------------------------------------------------------------------
+
+select pg_temp.login('alice');
+set role authenticated;
+
+insert into public.course (id, name, updated_at) values ('k1', 'first', '2099-11-09T10:00:00Z');
+
+-- An older change arriving late: ignored, also by an upsert.
+insert into public.course (id, name, updated_at) values ('k1', 'older', '2099-11-09T09:00:00Z')
+on conflict (user_id, id) do update set name = excluded.name, updated_at = excluded.updated_at;
+select pg_temp.check((select name = 'first' from public.course where id = 'k1'),
+    'an older change doesn''t overwrite a newer one');
+
+-- A newer one goes through; the same time again too (sending twice is harmless).
+insert into public.course (id, name, updated_at) values ('k1', 'newer', '2099-11-09T11:00:00Z')
+on conflict (user_id, id) do update set name = excluded.name, updated_at = excluded.updated_at;
+select pg_temp.check((select name = 'newer' from public.course where id = 'k1'),
+    'a newer change goes through');
+update public.course set name = 'same time' where id = 'k1';
+select pg_temp.check((select name = 'same time' from public.course where id = 'k1'),
+    'a change with the same time goes through');
+
+reset role;
+
+
+-- ---------------------------------------------------------------------------
 -- Not logged in: nothing
 -- ---------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 //! Making an account, logging in, refreshing and logging out, against a real
 //! Supabase Auth (GoTrue) on this computer with Lockin's cloud schema and its
-//! invite hook. `tools/test-cloud-auth.sh` starts one and runs these tests; a
+//! invite hook. `tools/test-cloud.sh` starts one and runs these tests; a
 //! plain `cargo test` skips them (no LOCKIN_TEST_AUTH_URL).
 
 use lockin_core::account::{self, AccountError, Cloud, Kept};
@@ -9,7 +9,10 @@ use lockin_core::account::{self, AccountError, Cloud, Kept};
 fn local() -> Option<(Cloud, String)> {
     let auth_url = std::env::var("LOCKIN_TEST_AUTH_URL").ok()?;
     let database = std::env::var("LOCKIN_TEST_DATABASE_URL").ok()?;
-    Some((Cloud::new(&auth_url, "test-key"), database))
+    Some((
+        Cloud::new(&auth_url, "http://127.0.0.1:1", "test-key"),
+        database,
+    ))
 }
 
 macro_rules! local_or_skip {
@@ -17,7 +20,7 @@ macro_rules! local_or_skip {
         match local() {
             Some(found) => found,
             None => {
-                eprintln!("skipped: run tools/test-cloud-auth.sh for the account tests");
+                eprintln!("skipped: run tools/test-cloud.sh for the account tests");
                 return;
             }
         }

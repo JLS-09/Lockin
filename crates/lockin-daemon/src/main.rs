@@ -11,7 +11,7 @@ use chrono::{Datelike, Duration, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use lockin_core::account::{self, Cloud};
 use lockin_core::ipc::{self, Request};
 use lockin_core::model::{FeedEvent, FeedSync, SessionDetails, StudySession};
-use lockin_core::{block, db, deadline, import, paths, points, session, timeedit, urgent};
+use lockin_core::{block, db, deadline, import, paths, points, session, sync, timeedit, urgent};
 
 const USAGE: &str = "usage: lockin-daemon <command>
 
@@ -68,6 +68,7 @@ const USAGE: &str = "usage: lockin-daemon <command>
                            make a Lockin account (asks for a password)
   log-in <email>           log in (asks for the password)
   log-out                  log out on this computer
+  cloud-sync               sync with the cloud now (the daemon does it every 2 minutes)
 
   profiles                 the block profiles and their apps
   add-profile <name>       make a block profile, e.g. Strict
@@ -380,6 +381,16 @@ async fn main() -> Result<()> {
             let session = account::log_in(&Cloud::lockin(), email, &password).await?;
             account::save(&paths::account_file()?, &session)?;
             println!("Logged in as {}.", session.email);
+        }
+        (Some("cloud-sync"), _) => {
+            let Some(session) = account::load(&paths::account_file()?)? else {
+                bail!("not logged in: log in first (log-in <email>)");
+            };
+            let report = sync::sync(&pool, &Cloud::lockin(), &session, Utc::now()).await?;
+            println!("{} sent, {} received.", report.sent, report.received);
+            for skipped in report.skipped {
+                println!("Skipped {skipped}");
+            }
         }
         (Some("log-out"), _) => {
             let file = paths::account_file()?;

@@ -38,26 +38,31 @@ const TIMEOUT_SECONDS: u64 = 20;
 /// The message the invite hook answers with (supabase/migrations, `lockin_check_invite`).
 const INVITE_REFUSED: &str = "lockin: invalid invite code";
 
-/// Where the account server is.
+/// Where the cloud is: the account server and the database's REST service.
 #[derive(Debug, Clone)]
 pub struct Cloud {
     /// The Auth service, e.g. https://….supabase.co/auth/v1
     pub auth_url: String,
+    /// The REST service on the database (PostgREST), e.g. https://….supabase.co/rest/v1
+    pub rest_url: String,
     pub key: String,
 }
 
 impl Cloud {
-    /// Lockin's project. For development and tests, `LOCKIN_AUTH_URL` points it
-    /// at a local Supabase Auth instead (tools/test-cloud-auth.sh).
+    /// Lockin's project. For development and tests, `LOCKIN_AUTH_URL` and
+    /// `LOCKIN_REST_URL` point it at a local Supabase instead (tools/test-cloud.sh).
     pub fn lockin() -> Cloud {
         let auth_url =
             std::env::var("LOCKIN_AUTH_URL").unwrap_or_else(|_| format!("{PROJECT_URL}/auth/v1"));
-        Cloud::new(&auth_url, PUBLISHABLE_KEY)
+        let rest_url =
+            std::env::var("LOCKIN_REST_URL").unwrap_or_else(|_| format!("{PROJECT_URL}/rest/v1"));
+        Cloud::new(&auth_url, &rest_url, PUBLISHABLE_KEY)
     }
 
-    pub fn new(auth_url: &str, key: &str) -> Cloud {
+    pub fn new(auth_url: &str, rest_url: &str, key: &str) -> Cloud {
         Cloud {
             auth_url: auth_url.trim_end_matches('/').to_string(),
+            rest_url: rest_url.trim_end_matches('/').to_string(),
             key: key.to_string(),
         }
     }
